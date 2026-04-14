@@ -1,0 +1,50 @@
+{
+    "name": "nwrman/laravel-toolkit",
+    "description": "Opinionated DX toolkit for Laravel: parallel preflight CI runner, test reporting with retry, deployment notifications, and publishable code quality configs.",
+    "keywords": ["laravel", "testing", "ci", "preflight", "rector", "pint", "phpstan", "dx"],
+    "license": "MIT",
+    "type": "library",
+    "authors": [
+        {
+            "name": "Jonathan Hernandez",
+            "email": "jonathan@nwrman.dev"
+        }
+    ],
+    "require": {
+        "php": "^8.4",
+        "illuminate/console": "^12.0 || ^13.0",
+        "illuminate/contracts": "^12.0 || ^13.0",
+        "illuminate/process": "^12.0 || ^13.0",
+        "illuminate/support": "^12.0 || ^13.0",
+        "illuminate/http": "^12.0 || ^13.0"
+    },
+    "require-dev": {
+        "orchestra/testbench": "^10.0 || ^11.0",
+        "pestphp/pest": "^3.0 || ^4.0 || ^5.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Nwrman\\Toolkit\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Nwrman\\Toolkit\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Nwrman\\Toolkit\\ToolkitServiceProvider"
+            ]
+        }
+    },
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {
+            "pestphp/pest-plugin": true
+        }
+    },
+    "minimum-stability": "dev",
+    "prefer-stable": true
+}
