@@ -1,0 +1,420 @@
+name: tests
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  checks: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  TELEGRAM_API_BASE: https://api.telegram.org
+
+jobs:
+  notify_start:
+    name: 'notify: start'
+    if: >
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Send Start Notification
+        continue-on-error: true
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ -z "${TELEGRAM_BOT_TOKEN}" ] || [ -z "${TELEGRAM_CHAT_ID}" ]; then
+            echo "Telegram secrets are not configured; skipping start notification."
+            exit 0
+          fi
+
+          SHORT_SHA="${GITHUB_SHA::7}"
+          MESSAGE=$(cat <<EOF
+          🚀 <b>CI started</b>
+
+          <b>Repository:</b> ${GITHUB_REPOSITORY}
+          <b>Ref:</b> ${GITHUB_REF_NAME}
+          <b>Actor:</b> ${GITHUB_ACTOR}
+          <b>Commit:</b> ${SHORT_SHA}
+          <b>Run:</b> ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+          EOF
+          )
+          curl --silent --show-error --fail \
+            -X POST "${TELEGRAM_API_BASE}/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "parse_mode=HTML" \
+            --data-urlencode "text=${MESSAGE}" > /dev/null
+
+  build:
+    name: Build
+    needs: notify_start
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: 8.5
+          tools: composer:v2
+          coverage: none
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Cache Composer Dependencies
+        uses: actions/cache@v5
+        with:
+          path: vendor
+          key: ${{ github.repository }}-composer-${{ hashFiles('composer.lock') }}
+          restore-keys: ${{ runner.os }}-composer-
+
+      - name: Install Composer Dependencies
+        run: composer install --no-interaction --prefer-dist --optimize-autoloader --no-progress
+
+      - name: Copy Environment File
+        run: cp .env.example .env
+
+      - name: Generate Application Key
+        run: php artisan key:generate
+
+      - name: Cache Bun Dependencies
+        uses: actions/cache@v5
+        with:
+          path: node_modules
+          key: ${{ github.repository }}-bun-${{ hashFiles('bun.lockb') }}
+          restore-keys: ${{ runner.os }}-bun-
+
+      - name: Install Bun Dependencies
+        run: bun install
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
+
+      - name: Build Assets
+        run: bun run --bun vp build
+
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: build-output
+          path: |
+            public/build/
+            .env
+            resources/js/actions/
+            resources/js/routes/
+            resources/js/wayfinder/
+          if-no-files-found: warn
+          retention-days: 1
+
+  php_checks:
+    name: 'ci: PHP checks'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: 8.5
+          tools: composer:v2
+          coverage: xdebug
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Restore Composer Cache
+        uses: actions/cache/restore@v5
+        with:
+          path: vendor
+          key: ${{ github.repository }}-composer-${{ hashFiles('composer.lock') }}
+          restore-keys: ${{ runner.os }}-composer-
+
+      - name: Install Composer Dependencies
+        run: composer install --no-interaction --prefer-dist --optimize-autoloader --no-progress
+
+      - name: Restore Bun Cache
+        uses: actions/cache/restore@v5
+        with:
+          path: node_modules
+          key: ${{ github.repository }}-bun-${{ hashFiles('bun.lockb') }}
+          restore-keys: ${{ runner.os }}-bun-
+
+      - name: Copy Environment File
+        run: cp .env.example .env
+
+      - name: Generate Application Key
+        run: php artisan key:generate
+
+      - name: Install Bun Dependencies
+        run: bun install
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
+
+      - name: Download Build Artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: build-output
+
+      - name: Get Playwright Version
+        id: playwright-version
+        run: echo "version=$(bun pm ls 2>/dev/null | grep playwright | head -1 | sed 's/.*@//')" >> $GITHUB_OUTPUT
+
+      - name: Cache Playwright Browsers
+        uses: actions/cache@v5
+        id: playwright-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ steps.playwright-version.outputs.version }}
+
+      - name: Install Playwright Browsers
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: bunx playwright install chromium --with-deps
+
+      - name: Install Playwright System Dependencies
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: bunx playwright install-deps chromium
+
+      - name: Run PHP Type Coverage
+        run: composer test:type-coverage
+
+      - name: Run Pest Coverage
+        run: |
+          mkdir -p tests/reports
+          XDEBUG_MODE='coverage' vendor/bin/pest --parallel --coverage --exactly=100.0 --log-junit tests/reports/pest-report.xml
+
+      - name: Store Screenshots
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: browser-screenshots
+          path: tests/Browser/Screenshots
+
+      - name: Publish Pest Test Report
+        if: always()
+        uses: mikepenz/action-junit-report@v6
+        with:
+          check_name: Pest Test Report
+          report_paths: tests/reports/pest-report.xml
+          fail_on_failure: false
+
+  frontend_coverage:
+    name: 'ci: Frontend Coverage'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Restore Bun Cache
+        uses: actions/cache/restore@v5
+        with:
+          path: node_modules
+          key: ${{ github.repository }}-bun-${{ hashFiles('bun.lockb') }}
+          restore-keys: ${{ runner.os }}-bun-
+
+      - name: Install Bun Dependencies
+        run: bun install
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
+
+      - name: Download Build Artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: build-output
+
+      - name: Run Frontend Coverage
+        run: bun run test:coverage
+
+  static_checks:
+    name: 'ci: Static Checks'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: 8.5
+          tools: composer:v2
+          coverage: none
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Restore Composer Cache
+        uses: actions/cache/restore@v5
+        with:
+          path: vendor
+          key: ${{ github.repository }}-composer-${{ hashFiles('composer.lock') }}
+          restore-keys: ${{ runner.os }}-composer-
+
+      - name: Install Composer Dependencies
+        run: composer install --no-interaction --prefer-dist --optimize-autoloader --no-progress
+
+      - name: Restore Bun Cache
+        uses: actions/cache/restore@v5
+        with:
+          path: node_modules
+          key: ${{ github.repository }}-bun-${{ hashFiles('bun.lockb') }}
+          restore-keys: ${{ runner.os }}-bun-
+
+      - name: Copy Environment File
+        run: cp .env.example .env
+
+      - name: Generate Application Key
+        run: php artisan key:generate
+
+      - name: Install Bun Dependencies
+        run: bun install
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
+
+      - name: Download Build Artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: build-output
+
+      - name: Cache Rector
+        uses: actions/cache@v5
+        with:
+          path: /tmp/rector
+          key: ${{ runner.os }}-rector-${{ hashFiles('composer.lock') }}
+          restore-keys: ${{ runner.os }}-rector-
+
+      - name: Cache PHPStan
+        uses: actions/cache@v5
+        with:
+          path: /tmp/phpstan
+          key: ${{ runner.os }}-phpstan-${{ hashFiles('composer.lock') }}
+          restore-keys: ${{ runner.os }}-phpstan-
+
+      - name: Create Cache Directories
+        run: mkdir -p /tmp/rector /tmp/phpstan
+
+      - name: Run Code Linting
+        run: composer test:lint
+
+      - name: Run Typechecking
+        run: composer test:types
+
+  notify_final:
+    name: 'notify: final'
+    needs: [build, php_checks, frontend_coverage, static_checks]
+    if: >
+      always() &&
+      (
+        (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+        github.event_name == 'pull_request'
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Send Final Summary Notification
+        continue-on-error: true
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          BUILD_RESULT: ${{ needs.build.result }}
+          PHP_CHECKS_RESULT: ${{ needs.php_checks.result }}
+          FRONTEND_COVERAGE_RESULT: ${{ needs.frontend_coverage.result }}
+          STATIC_CHECKS_RESULT: ${{ needs.static_checks.result }}
+        run: |
+          if [ -z "${TELEGRAM_BOT_TOKEN}" ] || [ -z "${TELEGRAM_CHAT_ID}" ]; then
+            echo "Telegram secrets are not configured; skipping final notification."
+            exit 0
+          fi
+
+          normalize_result() {
+            case "$1" in
+              success) echo "✅ success" ;;
+              failure) echo "❌ failure" ;;
+              cancelled) echo "⚠️ cancelled" ;;
+              skipped) echo "⏭️ skipped" ;;
+              *) echo "❔ ${1}" ;;
+            esac
+          }
+
+          FAILED_LANES=""
+          for lane in build php_checks frontend_coverage static_checks; do
+            result_var="$(echo "${lane}" | tr '[:lower:]' '[:upper:]')_RESULT"
+            result="${!result_var}"
+            if [ "${result}" = "failure" ] || [ "${result}" = "cancelled" ]; then
+              if [ -n "${FAILED_LANES}" ]; then
+                FAILED_LANES="${FAILED_LANES}, "
+              fi
+              FAILED_LANES="${FAILED_LANES}${lane}"
+            fi
+          done
+
+          if [ -n "${FAILED_LANES}" ]; then
+            OVERALL_ICON="❌"
+            OVERALL_TEXT="failure"
+          else
+            OVERALL_ICON="✅"
+            OVERALL_TEXT="success"
+            FAILED_LANES="none"
+          fi
+
+          MESSAGE=$(cat <<EOF
+          ${OVERALL_ICON} <b>CI summary</b>
+
+          <b>Overall:</b> ${OVERALL_TEXT}
+          <b>Build:</b> $(normalize_result "${BUILD_RESULT}")
+          <b>PHP checks:</b> $(normalize_result "${PHP_CHECKS_RESULT}")
+          <b>Frontend coverage:</b> $(normalize_result "${FRONTEND_COVERAGE_RESULT}")
+          <b>Static checks:</b> $(normalize_result "${STATIC_CHECKS_RESULT}")
+          <b>Failed lanes:</b> ${FAILED_LANES}
+
+          <b>Run:</b> ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+          EOF
+          )
+
+          curl --silent --show-error --fail \
+            -X POST "${TELEGRAM_API_BASE}/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "parse_mode=HTML" \
+            --data-urlencode "text=${MESSAGE}" > /dev/null
