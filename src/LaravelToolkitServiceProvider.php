@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Nwrman\LaravelToolkit;
 
 use Illuminate\Support\ServiceProvider;
-use Nwrman\LaravelToolkit\Commands\DeployNotifyTelegramCommand;
 use Nwrman\LaravelToolkit\Commands\InstallCommand;
 use Nwrman\LaravelToolkit\Commands\PreflightCommand;
 use Nwrman\LaravelToolkit\Commands\TestReportCommand;
@@ -15,11 +14,19 @@ final class LaravelToolkitServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
+        if (! $this->app->runningInConsole()) {
+            return;
+        }
+
         $this->mergeConfigFrom(__DIR__.'/../config/toolkit.php', 'toolkit');
     }
 
     public function boot(): void
     {
+        if (! $this->app->runningInConsole()) {
+            return;
+        }
+
         $this->deepMergeConfig();
         $this->registerCommands();
         $this->registerPublishing();
@@ -46,27 +53,18 @@ final class LaravelToolkitServiceProvider extends ServiceProvider
 
     private function registerCommands(): void
     {
-        if (! $this->app->runningInConsole()) {
-            return;
-        }
-
         PreflightCommand::prohibit($this->app->isProduction());
 
         $this->commands([
             PreflightCommand::class,
             TestReportCommand::class,
             TestRetryCommand::class,
-            DeployNotifyTelegramCommand::class,
             InstallCommand::class,
         ]);
     }
 
     private function registerPublishing(): void
     {
-        if (! $this->app->runningInConsole()) {
-            return;
-        }
-
         $this->publishes([
             __DIR__.'/../config/toolkit.php' => config_path('toolkit.php'),
         ], 'toolkit-config');
@@ -90,5 +88,10 @@ final class LaravelToolkitServiceProvider extends ServiceProvider
             __DIR__.'/../stubs/scripts/cloud-deploy.sh' => base_path('scripts/cloud-deploy.sh'),
             __DIR__.'/../stubs/scripts/lint-dirty.ts' => base_path('resources/js/scripts/lint-dirty.ts'),
         ], 'toolkit-scripts');
+
+        $this->publishes([
+            __DIR__.'/../stubs/commands/DeployNotifyTelegramCommand.php' => app_path('Console/Commands/DeployNotifyTelegramCommand.php'),
+            __DIR__.'/../stubs/commands/DeployNotifyTelegramCommandTest.php' => base_path('tests/Feature/Console/Commands/DeployNotifyTelegramCommandTest.php'),
+        ], 'toolkit-commands');
     }
 }

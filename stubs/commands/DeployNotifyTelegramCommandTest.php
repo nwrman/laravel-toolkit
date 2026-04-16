@@ -24,7 +24,7 @@ it('sends started deployment notification', function (): void {
         'https://api.telegram.org/*' => Http::response(['ok' => true], 200),
     ]);
 
-    $this->artisan('toolkit:deploy-notify started --stage=build')
+    $this->artisan('deploy:notify-telegram started --stage=build')
         ->expectsOutput('Telegram deployment notification sent.')
         ->assertExitCode(0);
 
@@ -53,7 +53,7 @@ it('sends failed deployment notification with reason and thread id', function ()
         'https://api.telegram.org/*' => Http::response(['ok' => true], 200),
     ]);
 
-    $this->artisan('toolkit:deploy-notify failed --stage=deploy --reason="Migration failed"')
+    $this->artisan('deploy:notify-telegram failed --stage=deploy --reason="Migration failed"')
         ->expectsOutput('Telegram deployment notification sent.')
         ->assertExitCode(0);
 
@@ -79,7 +79,7 @@ it('sends succeeded deployment notification', function (): void {
         'https://api.telegram.org/*' => Http::response(['ok' => true], 200),
     ]);
 
-    $this->artisan('toolkit:deploy-notify succeeded')
+    $this->artisan('deploy:notify-telegram succeeded')
         ->expectsOutput('Telegram deployment notification sent.')
         ->assertExitCode(0);
 
@@ -96,7 +96,7 @@ it('exits successfully when telegram config is missing', function (): void {
 
     Http::fake();
 
-    $this->artisan('toolkit:deploy-notify started')
+    $this->artisan('deploy:notify-telegram started')
         ->expectsOutput('Telegram credentials are missing; skipping deployment notification.')
         ->assertExitCode(0);
 
@@ -115,17 +115,17 @@ it('returns failure when telegram api returns an error', function (): void {
         'https://api.telegram.org/*' => Http::response(['ok' => false], 500),
     ]);
 
-    $this->artisan('toolkit:deploy-notify started')
+    $this->artisan('deploy:notify-telegram started')
         ->expectsOutput('Telegram notification failed: HTTP 500')
         ->assertExitCode(1);
 });
 
 it('validates status and stage options', function (): void {
-    $this->artisan('toolkit:deploy-notify unknown')
+    $this->artisan('deploy:notify-telegram unknown')
         ->expectsOutputToContain('Invalid status "unknown"')
         ->assertExitCode(2);
 
-    $this->artisan('toolkit:deploy-notify started --stage=invalid')
+    $this->artisan('deploy:notify-telegram started --stage=invalid')
         ->expectsOutputToContain('Invalid stage "invalid"')
         ->assertExitCode(2);
 });

@@ -15,10 +15,12 @@ afterEach(function (): void {
 
 it('runs the install command and publishes config', function (): void {
     $this->artisan('toolkit:install')
+        ->expectsConfirmation('Move nwrman/laravel-toolkit to require-dev?', 'no')
         ->expectsConfirmation('Merge recommended composer scripts?', 'no')
         ->expectsConfirmation('Publish AI skills & guidelines?', 'no')
         ->expectsConfirmation('Publish GitHub Actions workflow?', 'no')
         ->expectsConfirmation('Publish static analysis configs (pint.json, phpstan.neon)?', 'no')
+        ->expectsConfirmation('Publish deploy notification command (and test)?', 'no')
         ->expectsConfirmation('Publish deployment scripts?', 'no')
         ->expectsOutput('✓ Laravel Toolkit installed successfully!')
         ->assertExitCode(0);
@@ -39,10 +41,12 @@ it('merges composer scripts into composer.json', function (): void {
 
     try {
         $this->artisan('toolkit:install')
+            ->expectsConfirmation('Move nwrman/laravel-toolkit to require-dev?', 'no')
             ->expectsConfirmation('Merge recommended composer scripts?', 'yes')
             ->expectsConfirmation('Publish AI skills & guidelines?', 'no')
             ->expectsConfirmation('Publish GitHub Actions workflow?', 'no')
             ->expectsConfirmation('Publish static analysis configs (pint.json, phpstan.neon)?', 'no')
+            ->expectsConfirmation('Publish deploy notification command (and test)?', 'no')
             ->expectsConfirmation('Publish deployment scripts?', 'no')
             ->assertExitCode(0);
 
@@ -97,10 +101,12 @@ it('skips existing scripts and reports them', function (): void {
 
     try {
         $this->artisan('toolkit:install')
+            ->expectsConfirmation('Move nwrman/laravel-toolkit to require-dev?', 'no')
             ->expectsConfirmation('Merge recommended composer scripts?', 'yes')
             ->expectsConfirmation('Publish AI skills & guidelines?', 'no')
             ->expectsConfirmation('Publish GitHub Actions workflow?', 'no')
             ->expectsConfirmation('Publish static analysis configs (pint.json, phpstan.neon)?', 'no')
+            ->expectsConfirmation('Publish deploy notification command (and test)?', 'no')
             ->expectsConfirmation('Publish deployment scripts?', 'no')
             ->expectsOutputToContain('All recommended scripts already exist')
             ->assertExitCode(0);
@@ -109,6 +115,131 @@ it('skips existing scripts and reports them', function (): void {
         $result = json_decode(File::get($composerPath), true);
         expect($result['scripts']['dev'])->toBe('my-dev');
         expect($result['scripts']['preflight'])->toBe('my-preflight');
+    } finally {
+        if ($originalContent !== null) {
+            File::put($composerPath, $originalContent);
+        } else {
+            File::delete($composerPath);
+        }
+    }
+});
+
+it('moves the package from require to require-dev when confirmed', function (): void {
+    $composerPath = base_path('composer.json');
+    $originalContent = File::exists($composerPath) ? File::get($composerPath) : null;
+
+    $composerData = [
+        'name' => 'test/project',
+        'require' => [
+            'php' => '^8.5',
+            'nwrman/laravel-toolkit' => '^1.0',
+        ],
+        'require-dev' => [
+            'pestphp/pest' => '^4.0',
+        ],
+    ];
+    File::put($composerPath, json_encode($composerData, JSON_PRETTY_PRINT));
+
+    try {
+        $this->artisan('toolkit:install')
+            ->expectsConfirmation('Move nwrman/laravel-toolkit to require-dev?', 'yes')
+            ->expectsConfirmation('Merge recommended composer scripts?', 'no')
+            ->expectsConfirmation('Publish AI skills & guidelines?', 'no')
+            ->expectsConfirmation('Publish GitHub Actions workflow?', 'no')
+            ->expectsConfirmation('Publish static analysis configs (pint.json, phpstan.neon)?', 'no')
+            ->expectsConfirmation('Publish deploy notification command (and test)?', 'no')
+            ->expectsConfirmation('Publish deployment scripts?', 'no')
+            ->expectsOutputToContain('Moved nwrman/laravel-toolkit to require-dev.')
+            ->assertExitCode(0);
+
+        $result = json_decode(File::get($composerPath), true);
+
+        expect($result['require'])->not->toHaveKey('nwrman/laravel-toolkit');
+        expect($result['require'])->toHaveKey('php');
+        expect($result['require-dev'])->toHaveKey('nwrman/laravel-toolkit');
+        expect($result['require-dev']['nwrman/laravel-toolkit'])->toBe('^1.0');
+        expect($result['require-dev'])->toHaveKey('pestphp/pest');
+    } finally {
+        if ($originalContent !== null) {
+            File::put($composerPath, $originalContent);
+        } else {
+            File::delete($composerPath);
+        }
+    }
+});
+
+it('reports when the package is already in require-dev', function (): void {
+    $composerPath = base_path('composer.json');
+    $originalContent = File::exists($composerPath) ? File::get($composerPath) : null;
+
+    $composerData = [
+        'name' => 'test/project',
+        'require' => [
+            'php' => '^8.5',
+        ],
+        'require-dev' => [
+            'nwrman/laravel-toolkit' => '^1.0',
+        ],
+    ];
+    File::put($composerPath, json_encode($composerData, JSON_PRETTY_PRINT));
+
+    try {
+        $this->artisan('toolkit:install')
+            ->expectsConfirmation('Move nwrman/laravel-toolkit to require-dev?', 'yes')
+            ->expectsConfirmation('Merge recommended composer scripts?', 'no')
+            ->expectsConfirmation('Publish AI skills & guidelines?', 'no')
+            ->expectsConfirmation('Publish GitHub Actions workflow?', 'no')
+            ->expectsConfirmation('Publish static analysis configs (pint.json, phpstan.neon)?', 'no')
+            ->expectsConfirmation('Publish deploy notification command (and test)?', 'no')
+            ->expectsConfirmation('Publish deployment scripts?', 'no')
+            ->expectsOutputToContain('nwrman/laravel-toolkit is already in require-dev.')
+            ->assertExitCode(0);
+
+        // File should be unchanged
+        $result = json_decode(File::get($composerPath), true);
+        expect($result['require-dev'])->toHaveKey('nwrman/laravel-toolkit');
+        expect($result['require'])->not->toHaveKey('nwrman/laravel-toolkit');
+    } finally {
+        if ($originalContent !== null) {
+            File::put($composerPath, $originalContent);
+        } else {
+            File::delete($composerPath);
+        }
+    }
+});
+
+it('silently skips the require-dev migration when the package is in neither section', function (): void {
+    $composerPath = base_path('composer.json');
+    $originalContent = File::exists($composerPath) ? File::get($composerPath) : null;
+
+    $composerData = [
+        'name' => 'test/project',
+        'require' => [
+            'php' => '^8.5',
+        ],
+        'require-dev' => [
+            'pestphp/pest' => '^4.0',
+        ],
+    ];
+    File::put($composerPath, json_encode($composerData, JSON_PRETTY_PRINT));
+
+    try {
+        $this->artisan('toolkit:install')
+            ->expectsConfirmation('Move nwrman/laravel-toolkit to require-dev?', 'yes')
+            ->expectsConfirmation('Merge recommended composer scripts?', 'no')
+            ->expectsConfirmation('Publish AI skills & guidelines?', 'no')
+            ->expectsConfirmation('Publish GitHub Actions workflow?', 'no')
+            ->expectsConfirmation('Publish static analysis configs (pint.json, phpstan.neon)?', 'no')
+            ->expectsConfirmation('Publish deploy notification command (and test)?', 'no')
+            ->expectsConfirmation('Publish deployment scripts?', 'no')
+            ->doesntExpectOutputToContain('Moved nwrman/laravel-toolkit')
+            ->doesntExpectOutputToContain('already in require-dev')
+            ->assertExitCode(0);
+
+        // File should be unchanged
+        $result = json_decode(File::get($composerPath), true);
+        expect($result['require'])->not->toHaveKey('nwrman/laravel-toolkit');
+        expect($result['require-dev'])->not->toHaveKey('nwrman/laravel-toolkit');
     } finally {
         if ($originalContent !== null) {
             File::put($composerPath, $originalContent);

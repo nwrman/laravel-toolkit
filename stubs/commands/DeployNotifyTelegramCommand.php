@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Nwrman\LaravelToolkit\Commands;
+namespace App\Console\Commands;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Http;
@@ -27,7 +27,7 @@ final class DeployNotifyTelegramCommand extends Command
     ];
 
     #[Override]
-    protected $signature = 'toolkit:deploy-notify
+    protected $signature = 'deploy:notify-telegram
         {status : Deployment status (started|failed|succeeded)}
         {--stage=deploy : Deployment stage (build|deploy)}
         {--reason= : Optional failure reason}';

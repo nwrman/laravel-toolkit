@@ -12,6 +12,8 @@ use function Laravel\Prompts\confirm;
 
 final class InstallCommand extends Command
 {
+    private const string PACKAGE_NAME = 'nwrman/laravel-toolkit';
+
     /** @var array<string, string|array<int, string>> */
     private const array RECOMMENDED_SCRIPTS = [
         'dev' => [
@@ -85,6 +87,10 @@ final class InstallCommand extends Command
         $this->info('Installing Laravel Toolkit...');
         $this->newLine();
 
+        if (confirm('Move '.self::PACKAGE_NAME.' to require-dev?', true)) {
+            $this->moveToRequireDev();
+        }
+
         $this->call('vendor:publish', [
             '--tag' => 'toolkit-config',
             '--force' => $this->option('force'),
@@ -115,6 +121,13 @@ final class InstallCommand extends Command
             ]);
         }
 
+        if (confirm('Publish deploy notification command (and test)?', true)) {
+            $this->call('vendor:publish', [
+                '--tag' => 'toolkit-commands',
+                '--force' => $this->option('force'),
+            ]);
+        }
+
         if (confirm('Publish deployment scripts?', true)) {
             $this->call('vendor:publish', [
                 '--tag' => 'toolkit-scripts',
@@ -126,6 +139,57 @@ final class InstallCommand extends Command
         $this->info('✓ Laravel Toolkit installed successfully!');
 
         return self::SUCCESS;
+    }
+
+    private function moveToRequireDev(): void
+    {
+        $composerPath = base_path('composer.json');
+
+        if (! File::exists($composerPath)) {
+            $this->warn('composer.json not found at '.base_path());
+
+            return;
+        }
+
+        $composerData = json_decode(File::get($composerPath), true);
+
+        if (! is_array($composerData)) {
+            $this->error('Failed to parse composer.json');
+
+            return;
+        }
+
+        /** @var array<string, mixed> $require */
+        $require = is_array($composerData['require'] ?? null) ? $composerData['require'] : [];
+
+        /** @var array<string, mixed> $requireDev */
+        $requireDev = is_array($composerData['require-dev'] ?? null) ? $composerData['require-dev'] : [];
+
+        $inRequire = array_key_exists(self::PACKAGE_NAME, $require);
+        $inRequireDev = array_key_exists(self::PACKAGE_NAME, $requireDev);
+
+        if ($inRequireDev && ! $inRequire) {
+            $this->line('  <info>'.self::PACKAGE_NAME.' is already in require-dev.</info>');
+
+            return;
+        }
+
+        if (! $inRequire) {
+            // Not installed in either section; nothing to migrate.
+            return;
+        }
+
+        $constraint = $require[self::PACKAGE_NAME];
+        unset($require[self::PACKAGE_NAME]);
+        $requireDev[self::PACKAGE_NAME] = $constraint;
+
+        $composerData['require'] = $require;
+        $composerData['require-dev'] = $requireDev;
+
+        $encoded = json_encode($composerData, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        File::put($composerPath, is_string($encoded) ? $encoded."\n" : '');
+
+        $this->line('  <info>Moved '.self::PACKAGE_NAME.' to require-dev.</info> Run <comment>composer update</comment> to refresh the lock file.');
     }
 
     private function mergeComposerScripts(): void

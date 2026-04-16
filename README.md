@@ -13,8 +13,10 @@ Reusable developer infrastructure for Laravel: parallel CI gates, test reporting
 
 ## Installation
 
+This package is **dev-only**. Install it with `--dev`:
+
 ```bash
-composer require nwrman/laravel-toolkit
+composer require --dev nwrman/laravel-toolkit
 ```
 
 The package auto-discovers via Laravel's package discovery. Run the interactive installer to scaffold your project:
@@ -25,14 +27,26 @@ php artisan toolkit:install
 
 The installer walks you through:
 
-1. Publishing the config file (`config/toolkit.php`)
-2. Merging recommended composer scripts into your `composer.json`
-3. Publishing AI skills & guidelines (`.ai/`)
-4. Publishing a GitHub Actions CI workflow (`.github/workflows/tests.yml`)
-5. Publishing static analysis configs (`pint.json`, `phpstan.neon`)
-6. Publishing deployment scripts (`scripts/`)
+1. Moving `nwrman/laravel-toolkit` from `require` to `require-dev` in your `composer.json` (if needed)
+2. Publishing the config file (`config/toolkit.php`)
+3. Merging recommended composer scripts into your `composer.json`
+4. Publishing AI skills & guidelines (`.ai/`)
+5. Publishing a GitHub Actions CI workflow (`.github/workflows/tests.yml`)
+6. Publishing static analysis configs (`pint.json`, `phpstan.neon`)
+7. Publishing the deploy notification command into `app/Console/Commands/` (plus its Pest test)
+8. Publishing deployment scripts (`scripts/`)
 
 Each step is optional and skips files that already exist.
+
+### Production safety
+
+The package is a pure developer-tool: it registers no routes, middleware, bindings, listeners, migrations, or scheduled tasks. The service provider is fully inert outside `runningInConsole()` context, so it adds zero overhead to HTTP requests and queue workers even if it were accidentally installed via `require`.
+
+Production deploys that run `composer install --no-dev` do not need this package. The one class the deploy pipeline calls — the Telegram deploy-notification command — is published as a stub into your app's `app/Console/Commands/DeployNotifyTelegramCommand.php` (along with a Pest test in `tests/Feature/Console/Commands/`) so it lives in your application code, independent of whether this package is installed on the deploy host. Re-publish on upgrades with:
+
+```bash
+php artisan vendor:publish --tag=toolkit-commands --force
+```
 
 ## Commands
 
@@ -41,8 +55,9 @@ Each step is optional and skips files that already exist.
 | `toolkit:preflight` | Run all CI quality gates in parallel |
 | `toolkit:report` | Run test suites and generate failure reports |
 | `toolkit:retry` | Re-run only previously failed tests |
-| `toolkit:deploy-notify` | Send deploy notifications via Telegram |
 | `toolkit:install` | Interactive project setup wizard |
+
+A `deploy:notify-telegram` command is also available for deploy pipelines, but it is published into your application (not registered by this package) — see [Published deploy notification command](#published-deploy-notification-command).
 
 ### `toolkit:preflight`
 
@@ -144,14 +159,27 @@ composer test:retry
 composer preflight
 ```
 
-### `toolkit:deploy-notify`
+### Published deploy notification command
 
-Sends deployment status notifications to a Telegram chat via the Bot API.
+`deploy:notify-telegram` sends deployment status notifications to a Telegram chat via the Bot API. Unlike the other commands in this table, it is **not** registered by the package. It is published as a stub into your application so it remains available in production after `composer install --no-dev`.
+
+Publish it with:
 
 ```bash
-php artisan toolkit:deploy-notify started
-php artisan toolkit:deploy-notify succeeded
-php artisan toolkit:deploy-notify failed --reason="Migration failed" --stage=build
+php artisan vendor:publish --tag=toolkit-commands --force
+```
+
+This writes two files:
+
+- `app/Console/Commands/DeployNotifyTelegramCommand.php` — the command itself, in your `App\Console\Commands` namespace. Laravel auto-discovers it (Laravel 11+).
+- `tests/Feature/Console/Commands/DeployNotifyTelegramCommandTest.php` — a Pest feature test covering every branch, so publishing does not regress your coverage.
+
+Use it like any other artisan command:
+
+```bash
+php artisan deploy:notify-telegram started
+php artisan deploy:notify-telegram succeeded
+php artisan deploy:notify-telegram failed --reason="Migration failed" --stage=build
 ```
 
 **Arguments & options:**
@@ -172,7 +200,7 @@ php artisan toolkit:deploy-notify failed --reason="Migration failed" --stage=bui
 ],
 ```
 
-If credentials are missing, the command exits gracefully with a warning instead of failing.
+If credentials are missing, the command exits gracefully with a warning instead of failing. The published `scripts/cloud-build.sh` and `scripts/cloud-deploy.sh` invoke this command during deploys.
 
 ### `toolkit:install`
 
@@ -313,6 +341,7 @@ Command used to run frontend tests in `toolkit:report` and `toolkit:retry`.
 | `toolkit-static-analysis` | Pint + PHPStan configs | `pint.json`, `phpstan.neon` |
 | `toolkit-ai` | AI coding skills & guidelines | `.ai/skills/`, `.ai/guidelines/` |
 | `toolkit-github` | GitHub Actions CI workflow | `.github/workflows/tests.yml` |
+| `toolkit-commands` | Deploy-notify command + Pest test | `app/Console/Commands/DeployNotifyTelegramCommand.php`, `tests/Feature/Console/Commands/DeployNotifyTelegramCommandTest.php` |
 | `toolkit-scripts` | Deployment & lint scripts | `scripts/cloud-build.sh`, `scripts/cloud-deploy.sh`, `resources/js/scripts/lint-dirty.ts` |
 
 Publish individual tags:
@@ -321,6 +350,7 @@ Publish individual tags:
 php artisan vendor:publish --tag=toolkit-ai
 php artisan vendor:publish --tag=toolkit-github
 php artisan vendor:publish --tag=toolkit-static-analysis
+php artisan vendor:publish --tag=toolkit-commands
 php artisan vendor:publish --tag=toolkit-scripts
 ```
 
