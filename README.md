@@ -1,6 +1,10 @@
 # Laravel Toolkit
 
-Reusable developer infrastructure for Laravel: preflight CI gates, test reporting with retry, deploy notifications, and project scaffolding.
+Reusable developer infrastructure for Laravel: parallel CI gates, test reporting with smart retry, deploy notifications, and project scaffolding.
+
+[![Latest Version on Packagist](https://img.shields.io/packagist/v/nwrman/laravel-toolkit.svg?style=flat-square)](https://packagist.org/packages/nwrman/laravel-toolkit)
+[![GitHub Tests Action Status](https://img.shields.io/github/actions/workflow/status/nwrman/laravel-toolkit/run-tests.yml?branch=main&label=tests&style=flat-square)](https://github.com/nwrman/laravel-toolkit/actions?query=workflow%3Arun-tests+branch%3Amain)
+[![Total Downloads](https://img.shields.io/packagist/dt/nwrman/laravel-toolkit.svg?style=flat-square)](https://packagist.org/packages/nwrman/laravel-toolkit)
 
 ## Requirements
 
@@ -13,16 +17,22 @@ Reusable developer infrastructure for Laravel: preflight CI gates, test reportin
 composer require nwrman/laravel-toolkit
 ```
 
-Run the interactive installer to set up your project:
+The package auto-discovers via Laravel's package discovery. Run the interactive installer to scaffold your project:
 
 ```bash
 php artisan toolkit:install
 ```
 
-The installer will:
-1. Publish the config file
-2. Merge recommended composer scripts into your `composer.json`
-3. Optionally publish AI skills & guidelines, GitHub Actions workflows, static analysis configs, and deployment scripts
+The installer walks you through:
+
+1. Publishing the config file (`config/toolkit.php`)
+2. Merging recommended composer scripts into your `composer.json`
+3. Publishing AI skills & guidelines (`.ai/`)
+4. Publishing a GitHub Actions CI workflow (`.github/workflows/tests.yml`)
+5. Publishing static analysis configs (`pint.json`, `phpstan.neon`)
+6. Publishing deployment scripts (`scripts/`)
+
+Each step is optional and skips files that already exist.
 
 ## Commands
 
@@ -34,64 +44,144 @@ The installer will:
 | `toolkit:deploy-notify` | Send deploy notifications via Telegram |
 | `toolkit:install` | Interactive project setup wizard |
 
-### Preflight
+### `toolkit:preflight`
 
-Run all configured quality gates in parallel:
+Runs all configured quality gates in parallel with a live spinner UI, summary table, and macOS desktop notifications.
 
 ```bash
 php artisan toolkit:preflight
 ```
 
-Run specific gates:
+```
+Running 4 gates in parallel...
 
-```bash
-php artisan toolkit:preflight --gate=lint --gate=types
+  ✓ Pest Coverage        (18.4s)
+  ✓ Frontend Coverage    (8.1s)
+  ✓ Lint                 (6.7s)
+  ✓ Types                (9.3s)
+
++--------------------+--------+-------+
+| Gate               | Status | Time  |
++--------------------+--------+-------+
+| Pest Coverage      | ✓ pass | 18.4s |
+| Frontend Coverage  | ✓ pass | 8.1s  |
+| Lint               | ✓ pass | 6.7s  |
+| Types              | ✓ pass | 9.3s  |
++--------------------+--------+-------+
+Wall clock: 18.4s (saved 24.1s vs sequential)
+
+✓ All gates passed!
 ```
 
-Retry only previously failed gates:
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--gate=<name>` | Run specific gate(s). Repeatable: `--gate=lint --gate=types` |
+| `--retry` | Re-run only the gates that failed in the previous run |
+| `--force-build` | Force a frontend rebuild before running gates |
+| `--no-notify` | Suppress macOS desktop notification |
+
+**Retry workflow:** When gates fail, the command saves state to a JSON file. On the next run with `--retry`, only the failed gates are re-executed:
 
 ```bash
+# Initial run — lint and types fail
+php artisan toolkit:preflight
+
+# Fix the issues, then retry only the failed gates
 php artisan toolkit:preflight --retry
 ```
 
-Force a frontend rebuild before running gates:
+**Agent detection:** When running inside a CI agent (Claude Code, Cursor, OpenCode, etc.), the command automatically suppresses desktop notifications and uses a plain-text output format instead of ANSI spinners. Detection is powered by [`shipfastlabs/agent-detector`](https://github.com/shipfastlabs/agent-detector).
 
-```bash
-php artisan toolkit:preflight --force-build
-```
+**Production safety:** `PreflightCommand` uses Laravel's `Prohibitable` trait and is automatically prohibited in production environments by the service provider.
 
-### Test Report
+### `toolkit:report`
 
-Run test suites and generate a Markdown failure report:
+Runs test suites (Pest + Vitest), parses JUnit XML results, and generates a Markdown failure report with individual test details and quick re-run commands.
 
 ```bash
 php artisan toolkit:report
 ```
 
-Run specific suites:
+**Options:**
 
-```bash
-php artisan toolkit:report --suite=unit --suite=feature
-```
+| Option | Description |
+|--------|-------------|
+| `--suite=<list>` | Comma-separated suites to run: `unit,feature,browser,frontend` |
+| `--force-build` | Force a frontend rebuild before browser tests |
+| `--no-notify` | Suppress macOS desktop notification |
 
-### Test Retry
+When run interactively without `--suite`, it prompts you to select which suites to run using Laravel Prompts.
 
-Re-run only the tests that failed in the last report:
+**On failure**, two files are generated:
+
+- **Markdown report** (`storage/logs/test-failures.md`) — Human-readable with test names, file locations, error messages, and quick re-run commands
+- **JSON state** (`storage/logs/test-failures.json`) — Machine-readable, used by `toolkit:retry`
+
+**On success**, both files are cleaned up automatically.
+
+### `toolkit:retry`
+
+Re-runs only the tests that failed in the last `toolkit:report` run. Reads the JSON state file to determine which backend tests to filter and whether to re-run the frontend suite.
 
 ```bash
 php artisan toolkit:retry
 ```
 
-### Deploy Notify
+On success, the report and state files are cleaned up. On continued failure, they're preserved so you can iterate.
 
-Send a deployment notification to Telegram:
+**Typical workflow:**
 
 ```bash
-php artisan toolkit:deploy-notify --status=success
-php artisan toolkit:deploy-notify --status=failure --message="Migration failed"
+# Run all tests with reporting
+composer test:report
+
+# Fix failures, then re-run only what failed
+composer test:retry
+
+# Iterate until clean, then run full preflight
+composer preflight
 ```
 
-Requires `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` in your `config/services.php`.
+### `toolkit:deploy-notify`
+
+Sends deployment status notifications to a Telegram chat via the Bot API.
+
+```bash
+php artisan toolkit:deploy-notify started
+php artisan toolkit:deploy-notify succeeded
+php artisan toolkit:deploy-notify failed --reason="Migration failed" --stage=build
+```
+
+**Arguments & options:**
+
+| Argument/Option | Description |
+|-----------------|-------------|
+| `status` | Required. One of: `started`, `succeeded`, `failed` |
+| `--stage=<stage>` | `build` or `deploy` (default: `deploy`) |
+| `--reason=<text>` | Failure reason (only used when status is `failed`) |
+
+**Required config** in `config/services.php`:
+
+```php
+'telegram' => [
+    'bot_token' => env('TELEGRAM_BOT_TOKEN'),
+    'chat_id' => env('TELEGRAM_CHAT_ID'),
+    'thread_id' => env('TELEGRAM_THREAD_ID'), // optional, for topic-based groups
+],
+```
+
+If credentials are missing, the command exits gracefully with a warning instead of failing.
+
+### `toolkit:install`
+
+Interactive setup wizard that publishes stubs and merges composer scripts. Each step asks for confirmation and respects `--force` to overwrite existing files.
+
+```bash
+php artisan toolkit:install
+php artisan toolkit:install --force  # Overwrite existing files
+```
 
 ## Configuration
 
@@ -103,10 +193,10 @@ php artisan vendor:publish --tag=toolkit-config
 
 ### Smart Merge
 
-You only need to override what you want to change. The package deep-merges your config with its defaults:
+You only need to override what you want to change. The service provider deep-merges your published config with the package defaults using `array_replace_recursive`. This means you can override a single gate's command without redeclaring all gates:
 
 ```php
-// config/toolkit.php — only override the lint command
+// config/toolkit.php — only override what you need
 return [
     'gates' => [
         'lint' => [
@@ -116,7 +206,7 @@ return [
 ];
 ```
 
-All other gates (pest-coverage, frontend-coverage, types) keep their default configuration.
+All other gates (`pest-coverage`, `frontend-coverage`, `types`) keep their default configuration.
 
 ### Removing a Gate
 
@@ -125,36 +215,152 @@ Set a gate to `null` to remove it entirely:
 ```php
 return [
     'gates' => [
-        'frontend-coverage' => null,
+        'frontend-coverage' => null, // removed — won't run in preflight
     ],
 ];
 ```
 
-### Default Gates
+### Config Reference
 
-| Gate | Label | Description |
-|------|-------|-------------|
-| `pest-coverage` | Pest Coverage | Runs Pest with parallel execution and 100% coverage |
-| `frontend-coverage` | Frontend Coverage | Runs `bun run test:coverage` |
-| `lint` | Lint | Pint, Rector, and frontend linting |
-| `types` | Types | PHPStan and frontend type checking |
+#### `gates`
+
+Each gate runs a shell command as part of preflight. Gates run in parallel.
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `label` | `string` | Display name shown in the summary table |
+| `command` | `string` | Shell command to execute |
+| `env` | `array` | Optional environment variables (e.g., `['XDEBUG_MODE' => 'coverage']`) |
+| `requires_build` | `bool` | If `true`, ensures frontend is built before running this gate |
+
+**Default gates:**
+
+| Gate | Label | Default Command |
+|------|-------|----------------|
+| `pest-coverage` | Pest Coverage | `vendor/bin/pest --type-coverage --min=100 && vendor/bin/pest --parallel --coverage --exactly=100.0` |
+| `frontend-coverage` | Frontend Coverage | `bun run test:coverage` |
+| `lint` | Lint | `vendor/bin/pint --parallel --test && vendor/bin/rector --dry-run && bun run test:lint` |
+| `types` | Types | `vendor/bin/phpstan && bun run test:types` |
+
+#### `notifications`
+
+```php
+'notifications' => [
+    'desktop' => [
+        'enabled' => true, // Set to false to disable macOS notifications globally
+    ],
+],
+```
+
+Desktop notifications use `terminal-notifier` when available, falling back to `afplay` for sound-only alerts.
+
+#### `build`
+
+Controls the frontend build check that runs before gates marked with `requires_build`.
+
+```php
+'build' => [
+    'command' => 'vp build',           // Build command
+    'timeout' => 120,                   // Timeout in seconds
+    'stamp_file' => 'public/build/.buildstamp',    // Timestamp file for staleness check
+    'manifest_file' => 'public/build/manifest.json', // Vite manifest
+    'watch_paths' => 'resources/ vite.config.* tsconfig.* tailwind.config.* postcss.config.* package.json',
+],
+```
+
+The build check uses `find ... -newer <stamp_file>` to detect source changes. If no changes are detected, the build is skipped.
+
+#### `paths`
+
+File paths for state and reports, relative to the project root.
+
+```php
+'paths' => [
+    'preflight_state' => 'storage/logs/preflight-result.json',
+    'report_dir' => 'storage/logs',
+    'xml_file' => 'storage/logs/test-results.xml',
+    'report_file' => 'storage/logs/test-failures.md',
+    'json_file' => 'storage/logs/test-failures.json',
+],
+```
+
+#### `suites`
+
+Named test suites for `toolkit:report`. Keys are identifiers; values are display labels.
+
+```php
+'suites' => [
+    'unit' => 'Unit',
+    'feature' => 'Feature',
+    'browser' => 'Browser',
+    'frontend' => 'Frontend (Vitest)',
+],
+```
+
+#### `frontend_test_command`
+
+Command used to run frontend tests in `toolkit:report` and `toolkit:retry`.
+
+```php
+'frontend_test_command' => 'bun run test:ui',
+```
 
 ## Publishable Stubs
 
-| Tag | Contents |
-|-----|----------|
-| `toolkit-config` | `config/toolkit.php` |
-| `toolkit-static-analysis` | `pint.json`, `phpstan.neon` |
-| `toolkit-ai` | `.ai/skills/` and `.ai/guidelines/` |
-| `toolkit-github` | `.github/workflows/tests.yml` |
-| `toolkit-scripts` | `scripts/cloud-build.sh`, `scripts/cloud-deploy.sh`, `resources/js/scripts/lint-dirty.ts` |
+| Tag | Contents | Destination |
+|-----|----------|-------------|
+| `toolkit-config` | Configuration file | `config/toolkit.php` |
+| `toolkit-static-analysis` | Pint + PHPStan configs | `pint.json`, `phpstan.neon` |
+| `toolkit-ai` | AI coding skills & guidelines | `.ai/skills/`, `.ai/guidelines/` |
+| `toolkit-github` | GitHub Actions CI workflow | `.github/workflows/tests.yml` |
+| `toolkit-scripts` | Deployment & lint scripts | `scripts/cloud-build.sh`, `scripts/cloud-deploy.sh`, `resources/js/scripts/lint-dirty.ts` |
 
-Publish specific stubs:
+Publish individual tags:
 
 ```bash
 php artisan vendor:publish --tag=toolkit-ai
 php artisan vendor:publish --tag=toolkit-github
+php artisan vendor:publish --tag=toolkit-static-analysis
+php artisan vendor:publish --tag=toolkit-scripts
 ```
+
+### AI Skills
+
+The `toolkit-ai` tag publishes AI coding assistant skills and guidelines to `.ai/`:
+
+| Skill | Description |
+|-------|-------------|
+| `run-preflight` | Run preflight before pushing code |
+| `create-feature-branch` | Start a new feature branch |
+| `finish-feature-branch` | Create a PR when implementation is complete |
+| `land-feature-branch` | Merge an approved PR into main |
+
+Guidelines cover: action pattern, domain folders, test enforcement, general conventions, Pest testing, React best practices, and Vitest.
+
+## Recommended Composer Scripts
+
+The `toolkit:install` command can merge these scripts into your `composer.json`:
+
+| Script | Command |
+|--------|---------|
+| `composer dev` | Concurrent queue worker + Pail + Vite dev server |
+| `composer lint` | Rector + Pint + frontend linting |
+| `composer lint:dirty` | Lint only files changed since last commit |
+| `composer test` | Run all test suites (unit, feature, browser, frontend) |
+| `composer test:unit` | Pest unit tests (parallel) |
+| `composer test:feature` | Pest feature tests (parallel) |
+| `composer test:browser` | Pest browser tests (parallel) |
+| `composer test:lint` | Pint + Rector + frontend lint (verification mode) |
+| `composer test:types` | PHPStan + frontend type checking |
+| `composer test:ci` | Full CI pipeline (coverage + lint + types) |
+| `composer test:report` | `toolkit:report` with timeout disabled |
+| `composer test:retry` | `toolkit:retry` |
+| `composer preflight` | `toolkit:preflight` with timeout disabled |
+| `composer optimize` | Cache config, events, routes, and views |
+| `composer cloud:build` | Run cloud build script |
+| `composer cloud:deploy` | Run cloud deploy script |
+
+Scripts are added only if the key doesn't already exist in your `composer.json`.
 
 ## Testing
 
