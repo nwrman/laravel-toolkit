@@ -56,6 +56,7 @@ php artisan vendor:publish --tag=toolkit-commands --force
 | `toolkit:report` | Run test suites and generate failure reports |
 | `toolkit:retry` | Re-run only previously failed tests |
 | `toolkit:install` | Interactive project setup wizard |
+| `starter:install-filament` | Install the canonical Filament admin panel into a consumer app |
 
 A `deploy:notify-telegram` command is also available for deploy pipelines, but it is published into your application (not registered by this package) — see [Published deploy notification command](#published-deploy-notification-command).
 
@@ -210,6 +211,57 @@ Interactive setup wizard that publishes stubs and merges composer scripts. Each 
 php artisan toolkit:install
 php artisan toolkit:install --force  # Overwrite existing files
 ```
+
+### `starter:install-filament`
+
+Installs the canonical Filament admin panel shape into the current Laravel application. Designed for consumers of [`nwrman/laravel-starter-kit`](https://github.com/nwrman/laravel-starter-kit) who want an admin panel, either on day one or weeks later.
+
+```bash
+php artisan starter:install-filament
+php artisan starter:install-filament --dry-run             # Preview changes without writing anything
+php artisan starter:install-filament --force               # Overwrite existing files
+php artisan starter:install-filament --panel-path=backend  # Serve the panel from /backend
+php artisan starter:install-filament --no-seeder           # Skip installing AdminUserSeeder
+```
+
+What it does:
+
+1. Runs `composer require filament/filament` if missing.
+2. Runs `php artisan filament:install --panels` if not yet scaffolded.
+3. Copies the snapshotted Filament shape from `resources/filament-snapshot/` into your `app/` directory (UserResource, AdminPanelProvider, migrations, seeder).
+4. Registers the panel provider in `bootstrap/providers.php`.
+5. Runs migrations if new ones were added.
+
+The command is **idempotent**: running it twice is a safe no-op. Files that already match the canonical shape are left alone; files that differ are skipped unless `--force` is used.
+
+The shape itself (what gets installed) is maintained in a separate reference app — see [Filament reference app](#filament-reference-app) below.
+
+## Filament Reference App
+
+The Filament admin shape that `starter:install-filament` ships is developed as a **real, running Laravel application**, not a workbench or a collection of stubs. This keeps the dev loop ergonomic — you work in a live app, click around in a browser, and iterate like a consumer would.
+
+- **Reference app repo:** [`nwrman/nwrman-filament-reference`](https://github.com/nwrman/nwrman-filament-reference) (created via `composer create-project nwrman/laravel-starter-kit` + `composer require filament/filament` + `filament:install`)
+- **Snapshot location in this package:** `resources/filament-snapshot/`
+- **Snapshot script:** `bin/snapshot-filament.php`
+
+### Updating the snapshot
+
+When you want to evolve the canonical Filament shape:
+
+1. Iterate in the reference app (`~/Herd/nwrman-filament-reference`). Real app, real routes, real admin panel.
+2. Commit and tag the reference app.
+3. Run the snapshot:
+
+   ```bash
+   # Locally (in this toolkit repo)
+   composer snapshot:filament -- --from=../nwrman-filament-reference
+
+   # Or via CI — trigger the "snapshot-filament" workflow from GitHub Actions
+   #   with input `reference_ref=<tag>`. It opens a PR with the diff.
+   ```
+4. Review the diff in `resources/filament-snapshot/`, merge, and tag a new toolkit release.
+
+Consumers pick up the new shape on their next `composer update`. Their already-installed `app/Filament/` is unaffected — they own those files.
 
 ## Configuration
 

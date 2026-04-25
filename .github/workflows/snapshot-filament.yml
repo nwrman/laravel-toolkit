@@ -1,0 +1,93 @@
+name: snapshot-filament
+
+# Thin CI wrapper around `php bin/snapshot-filament.php`.
+#
+# The snapshot script is the source of truth — this workflow only:
+#   1. Checks out the toolkit repo (this repo).
+#   2. Checks out the reference app at a given ref.
+#   3. Runs the same snapshot script you'd run locally.
+#   4. Opens a PR with the diff for review.
+#
+# Run locally:
+#   composer snapshot:filament -- --from=../nwrman-filament-reference
+
+on:
+  workflow_dispatch:
+    inputs:
+      reference_ref:
+        description: 'Git ref of the reference app to snapshot (branch, tag, or SHA)'
+        required: true
+        default: 'main'
+      reference_repo:
+        description: 'Reference app repository (owner/name)'
+        required: true
+        default: 'nwrman/nwrman-filament-reference'
+
+concurrency:
+  group: snapshot-filament
+  cancel-in-progress: false
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout toolkit
+        uses: actions/checkout@v6
+        with:
+          path: toolkit
+
+      - name: Checkout reference app
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ inputs.reference_repo }}
+          ref: ${{ inputs.reference_ref }}
+          path: reference
+
+      - name: Capture reference SHA
+        id: reference
+        run: |
+          cd reference
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "short_sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.5'
+          extensions: dom, curl, libxml, mbstring, zip, pcntl, pdo, sqlite, pdo_sqlite, bcmath, intl, fileinfo
+          coverage: none
+
+      - name: Install toolkit dependencies
+        working-directory: toolkit
+        run: composer install --prefer-dist --no-interaction
+
+      - name: Run snapshot
+        working-directory: toolkit
+        run: php bin/snapshot-filament.php --from=../reference
+
+      - name: Create pull request
+        uses: peter-evans/create-pull-request@v7
+        with:
+          path: toolkit
+          branch: snapshot/filament-${{ steps.reference.outputs.short_sha }}
+          commit-message: |
+            chore: snapshot filament from reference@${{ inputs.reference_ref }}
+
+            Source: ${{ inputs.reference_repo }}@${{ steps.reference.outputs.sha }}
+          title: 'chore: snapshot filament from reference@${{ inputs.reference_ref }}'
+          body: |
+            Automated snapshot of the Filament shape from the reference app.
+
+            **Source**: `${{ inputs.reference_repo }}` @ `${{ steps.reference.outputs.sha }}`
+            **Triggered by**: @${{ github.actor }}
+            **Workflow run**: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+            Review the diff carefully — files in `resources/filament-snapshot/` are what `php artisan starter:install-filament` will ship to consumers.
+          add-paths: |
+            resources/filament-snapshot/**
+          delete-branch: true

@@ -6,6 +6,7 @@ namespace Nwrman\LaravelToolkit;
 
 use Illuminate\Support\ServiceProvider;
 use Nwrman\LaravelToolkit\Commands\InstallCommand;
+use Nwrman\LaravelToolkit\Commands\InstallFilamentCommand;
 use Nwrman\LaravelToolkit\Commands\PreflightCommand;
 use Nwrman\LaravelToolkit\Commands\TestReportCommand;
 use Nwrman\LaravelToolkit\Commands\TestRetryCommand;
@@ -60,6 +61,7 @@ final class LaravelToolkitServiceProvider extends ServiceProvider
             TestReportCommand::class,
             TestRetryCommand::class,
             InstallCommand::class,
+            InstallFilamentCommand::class,
         ]);
     }
 
