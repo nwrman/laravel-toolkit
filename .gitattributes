@@ -8,5 +8,4 @@
 /.editorconfig      export-ignore
 /phpunit.xml.dist   export-ignore
 /phpstan.neon.dist  export-ignore
-/stubs              export-ignore
 /tests              export-ignore
