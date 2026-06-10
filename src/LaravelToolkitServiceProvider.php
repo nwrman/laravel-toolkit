@@ -82,6 +82,10 @@ final class LaravelToolkitServiceProvider extends ServiceProvider
         ], 'toolkit-ai');
 
         $this->publishes([
+            __DIR__.'/../stubs/claude/hooks/enforce-test-command.php' => base_path('.claude/hooks/enforce-test-command.php'),
+        ], 'toolkit-claude');
+
+        $this->publishes([
             __DIR__.'/../stubs/github/workflows/tests.yml' => base_path('.github/workflows/tests.yml'),
         ], 'toolkit-github');
 
