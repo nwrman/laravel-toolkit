@@ -4,8 +4,11 @@ declare(strict_types=1);
 
 namespace Nwrman\LaravelToolkit\Concerns;
 
+use FilesystemIterator;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Process;
+use RecursiveDirectoryIterator;
+use RecursiveIteratorIterator;
 
 trait ManagesFrontendBuild
 {
@@ -24,13 +27,45 @@ trait ManagesFrontendBuild
             return true;
         }
 
+        $stampTime = (int) filemtime($stampFile);
+
         /** @var string $watchPaths */
         $watchPaths = config('toolkit.build.watch_paths', 'resources/ vite.config.* tsconfig.* tailwind.config.* postcss.config.* package.json');
 
-        $cmd = sprintf('find %s -newer %s -print -quit 2>/dev/null', $watchPaths, $stampFile);
-        $process = Process::run($cmd);
+        $patterns = preg_split('/\s+/', mb_trim($watchPaths), -1, PREG_SPLIT_NO_EMPTY) ?: [];
 
-        return ! in_array(mb_trim($process->output()), ['', '0'], true);
+        foreach ($patterns as $pattern) {
+            foreach (glob($pattern) ?: [] as $path) {
+                if (is_dir($path)) {
+                    if ($this->directoryHasFileNewerThan($path, $stampTime)) {
+                        return true;
+                    }
+                } elseif ((int) filemtime($path) > $stampTime) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * @codeCoverageIgnore
+     */
+    private function directoryHasFileNewerThan(string $directory, int $stampTime): bool
+    {
+        /** @var iterable<\SplFileInfo> $iterator */
+        $iterator = new RecursiveIteratorIterator(
+            new RecursiveDirectoryIterator($directory, FilesystemIterator::SKIP_DOTS)
+        );
+
+        foreach ($iterator as $file) {
+            if ($file->isFile() && $file->getMTime() > $stampTime) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function ensureFrontendBuild(): bool

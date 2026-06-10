@@ -230,9 +230,14 @@ final class PreflightCommand extends Command
         /** @var array<string, InvokedProcess> $processes */
         $processes = [];
 
+        // Put the project's vendor/bin on PATH so gate commands can use bare binary
+        // names (pest, pint, rector, phpstan) regardless of whether preflight was
+        // run via `composer` (which adds vendor/bin itself) or `php artisan` directly.
+        $pathWithBin = base_path('vendor/bin').PATH_SEPARATOR.(getenv('PATH') ?: '');
+
         foreach ($gatesToRun as $gate) {
             $config = $gates[$gate];
-            $env = $config['env'] ?? [];
+            $env = ['PATH' => $pathWithBin, ...$config['env'] ?? []];
 
             $processes[$gate] = Process::env($env)->forever()
                 ->start($config['command'], function (string $type, string $output) use ($gate, &$outputs): void {
