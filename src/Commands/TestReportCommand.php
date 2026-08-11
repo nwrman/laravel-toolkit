@@ -20,6 +20,9 @@ final class TestReportCommand extends Command
     use ManagesFrontendBuild;
     use SendsDesktopNotifications;
 
+    /** @var list<string> */
+    private const array BACKEND_SUITES = ['unit', 'feature', 'browser'];
+
     #[Override]
     protected $signature = 'toolkit:report
         {--force-build : Force frontend rebuild}
@@ -56,7 +59,7 @@ final class TestReportCommand extends Command
         $frontendExitCode = 0;
         $frontendOutput = '';
 
-        $backendSuites = array_intersect($suitesToRun, ['unit', 'feature', 'browser']);
+        $backendSuites = array_intersect($suitesToRun, self::BACKEND_SUITES);
         if ($backendSuites !== []) {
             $backendExitCode = $this->runBackendTests($backendSuites);
         }
@@ -146,12 +149,24 @@ final class TestReportCommand extends Command
         $suiteArg = implode(',', $suiteNames);
 
         $xmlFile = $this->configPath('xml_file');
-        $cmd = sprintf('pest --testsuite=%s --ci --parallel --log-junit %s', $suiteArg, $xmlFile);
+
+        // Pest's Test Impact Analysis replays only the tests a change can reach, but it
+        // engages on full runs only: --testsuite counts as a partial selection and
+        // disables it, as does --ci. When every backend suite is selected the filter is
+        // redundant anyway, so drop both and record with a coverage driver — JUnit
+        // logging still works, so the failure report is unaffected. Narrower runs keep
+        // the driver-off path, which is faster than recording a graph they can't use.
+        $tia = (bool) config('toolkit.tia.enabled', false)
+            && array_diff(self::BACKEND_SUITES, $suites) === [];
+
+        $cmd = $tia
+            ? sprintf('pest --parallel --log-junit %s', $xmlFile)
+            : sprintf('pest --testsuite=%s --ci --parallel --log-junit %s', $suiteArg, $xmlFile);
 
         $this->line(sprintf('<comment>Running Backend Tests (%s)...</comment>', $suiteArg));
 
         return Process::forever()->env([
-            'XDEBUG_MODE' => 'off',
+            'XDEBUG_MODE' => $tia ? 'coverage' : 'off',
         ])->start($cmd, function (string $type, string $output): void {
             $this->output->write($output);
         })->wait()->exitCode() ?? 1;

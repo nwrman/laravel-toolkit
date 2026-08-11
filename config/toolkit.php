@@ -112,4 +112,24 @@ return [
 
     'frontend_test_command' => 'bun run test:ui',
 
+    /*
+    |--------------------------------------------------------------------------
+    | Test Impact Analysis
+    |--------------------------------------------------------------------------
+    |
+    | Pest's TIA replays only the tests a change can actually reach. It engages
+    | on full runs only — `--testsuite` and `--ci` both switch it off — so this
+    | applies when every backend suite is selected, and narrower runs keep the
+    | existing driver-off path.
+    |
+    | Requires a coverage driver (recording costs roughly 2x, once) and
+    | `pest()->tia()` in tests/Pest.php. Off by default; the flag alone does
+    | nothing without that configuration.
+    |
+    */
+
+    'tia' => [
+        'enabled' => env('TOOLKIT_TIA', false),
+    ],
+
 ];

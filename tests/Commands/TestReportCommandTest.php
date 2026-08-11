@@ -34,6 +34,59 @@ it('runs backend suites successfully', function (): void {
     Process::assertRan(fn ($process): bool => str_contains((string) $process->command, 'pest --testsuite=Unit,Feature'));
 });
 
+it('keeps --testsuite and the driver off for a narrow run even with TIA enabled', function (): void {
+    // TIA can't engage on a partial selection, so recording a graph would only cost time.
+    config(['toolkit.tia.enabled' => true]);
+
+    Process::fake(['pest *' => Process::result(exitCode: 0)]);
+
+    $this->artisan('toolkit:report', ['--suite' => 'unit', '--no-notify' => true])
+        ->assertExitCode(0);
+
+    Process::assertRan(fn ($process): bool => str_starts_with((string) $process->command, 'pest ')
+        && str_contains((string) $process->command, '--testsuite=Unit')
+        && str_contains((string) $process->command, '--ci')
+        && ($process->environment['XDEBUG_MODE'] ?? null) === 'off');
+});
+
+it('drops --testsuite and --ci for a full backend run when TIA is enabled', function (): void {
+    config(['toolkit.tia.enabled' => true]);
+
+    // The browser suite triggers the frontend build check first.
+    Process::fake([
+        'find *' => Process::result(output: '', exitCode: 0),
+        'vp build' => Process::result(exitCode: 0),
+        'pest *' => Process::result(exitCode: 0),
+    ]);
+
+    $this->artisan('toolkit:report', ['--suite' => 'unit,feature,browser', '--no-notify' => true])
+        ->assertExitCode(0);
+
+    Process::assertRan(fn ($process): bool => str_starts_with((string) $process->command, 'pest ')
+        && ! str_contains((string) $process->command, '--testsuite')
+        && ! str_contains((string) $process->command, '--ci')
+        && str_contains((string) $process->command, '--log-junit') // the report still needs this
+        && ($process->environment['XDEBUG_MODE'] ?? null) === 'coverage');
+});
+
+it('keeps the full backend run filtered when TIA is disabled', function (): void {
+    config(['toolkit.tia.enabled' => false]);
+
+    // The browser suite triggers the frontend build check first.
+    Process::fake([
+        'find *' => Process::result(output: '', exitCode: 0),
+        'vp build' => Process::result(exitCode: 0),
+        'pest *' => Process::result(exitCode: 0),
+    ]);
+
+    $this->artisan('toolkit:report', ['--suite' => 'unit,feature,browser', '--no-notify' => true])
+        ->assertExitCode(0);
+
+    Process::assertRan(fn ($process): bool => str_starts_with((string) $process->command, 'pest ')
+        && str_contains((string) $process->command, '--testsuite=Unit,Feature,Browser')
+        && ($process->environment['XDEBUG_MODE'] ?? null) === 'off');
+});
+
 it('generates report when a suite fails', function (): void {
     Process::fake([
         'pest *' => Process::result(output: 'Failures', exitCode: 1),
