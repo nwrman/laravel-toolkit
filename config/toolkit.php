@@ -112,4 +112,22 @@ return [
 
     'frontend_test_command' => 'bun run test:ui',
 
+    /*
+    |--------------------------------------------------------------------------
+    | Test Impact Analysis
+    |--------------------------------------------------------------------------
+    |
+    | Pest's TIA engine replays only the tests a change can actually reach. It
+    | needs a coverage driver to record its dependency graph, and it switches
+    | itself off when `--ci` is present — so enabling this inverts both of those
+    | defaults for `toolkit:report`. Off by default: the driver costs roughly 2x
+    | on the one recording run, and it only pays off once the app also configures
+    | `pest()->tia()` in tests/Pest.php.
+    |
+    */
+
+    'tia' => [
+        'enabled' => env('TOOLKIT_TIA', false),
+    ],
+
 ];

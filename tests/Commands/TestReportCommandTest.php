@@ -34,6 +34,39 @@ it('runs backend suites successfully', function (): void {
     Process::assertRan(fn ($process): bool => str_contains((string) $process->command, 'pest --testsuite=Unit,Feature'));
 });
 
+it('runs with the coverage driver off and --ci when TIA is disabled', function (): void {
+    config(['toolkit.tia.enabled' => false]);
+
+    Process::fake(['pest *' => Process::result(output: 'ok', exitCode: 0)]);
+
+    $this->artisan('toolkit:report', ['--suite' => 'unit', '--no-notify' => true])
+        ->assertExitCode(0);
+
+    Process::assertRan(function ($process): bool {
+        expect($process->command)->toContain('--ci');
+
+        return ($process->environment['XDEBUG_MODE'] ?? null) === 'off';
+    });
+});
+
+it('enables the coverage driver and drops --ci when TIA is enabled', function (): void {
+    // TIA needs a driver to record its graph, and deactivates itself under --ci.
+    config(['toolkit.tia.enabled' => true]);
+
+    Process::fake(['pest *' => Process::result(output: 'ok', exitCode: 0)]);
+
+    $this->artisan('toolkit:report', ['--suite' => 'unit', '--no-notify' => true])
+        ->assertExitCode(0);
+
+    Process::assertRan(function ($process): bool {
+        expect($process->command)
+            ->not->toContain('--ci')
+            ->toContain('pest --testsuite=Unit --parallel');
+
+        return ($process->environment['XDEBUG_MODE'] ?? null) === 'coverage';
+    });
+});
+
 it('generates report when a suite fails', function (): void {
     Process::fake([
         'pest *' => Process::result(output: 'Failures', exitCode: 1),
