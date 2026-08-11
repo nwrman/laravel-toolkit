@@ -146,24 +146,12 @@ final class TestReportCommand extends Command
         $suiteArg = implode(',', $suiteNames);
 
         $xmlFile = $this->configPath('xml_file');
-
-        // Pest's Test Impact Analysis replays only the tests a change can reach. It needs
-        // a coverage driver to record its dependency graph, and it deactivates itself when
-        // `--ci` is present — so both of this command's defaults have to invert when the
-        // app opts in. Apps that don't keep the faster driver-off, `--ci` behaviour.
-        $tia = (bool) config('toolkit.tia.enabled', false);
-
-        $cmd = sprintf(
-            'pest --testsuite=%s%s --parallel --log-junit %s',
-            $suiteArg,
-            $tia ? '' : ' --ci',
-            $xmlFile,
-        );
+        $cmd = sprintf('pest --testsuite=%s --ci --parallel --log-junit %s', $suiteArg, $xmlFile);
 
         $this->line(sprintf('<comment>Running Backend Tests (%s)...</comment>', $suiteArg));
 
         return Process::forever()->env([
-            'XDEBUG_MODE' => $tia ? 'coverage' : 'off',
+            'XDEBUG_MODE' => 'off',
         ])->start($cmd, function (string $type, string $output): void {
             $this->output->write($output);
         })->wait()->exitCode() ?? 1;
