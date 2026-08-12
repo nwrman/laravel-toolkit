@@ -30,11 +30,11 @@ The installer walks you through:
 1. Moving `nwrman/laravel-toolkit` from `require` to `require-dev` in your `composer.json` (if needed)
 2. Publishing the config file (`config/toolkit.php`)
 3. Merging recommended composer scripts into your `composer.json`
-4. Publishing AI skills & guidelines (`.ai/`)
+4. Publishing AI skills & guidelines (`.ai/`), and registering every skill found in `.ai/skills` with Laravel Boost (`boost.json`) so agents are actually told they exist
 5. Publishing a GitHub Actions CI workflow (`.github/workflows/tests.yml`)
 6. Publishing static analysis configs (`pint.json`, `phpstan.neon`)
 7. Publishing the deploy notification command into `app/Console/Commands/` (plus its Pest test)
-8. Publishing deployment scripts (`scripts/`)
+8. Publishing deployment scripts (`scripts/cloud-build.sh`, `cloud-deploy.sh`, `cloud-setup.sh`)
 
 Each step is optional and skips files that already exist.
 
@@ -394,7 +394,7 @@ Command used to run frontend tests in `toolkit:report` and `toolkit:retry`.
 | `toolkit-ai` | AI coding skills & guidelines | `.ai/skills/`, `.ai/guidelines/` |
 | `toolkit-github` | GitHub Actions CI workflow | `.github/workflows/tests.yml` |
 | `toolkit-commands` | Deploy-notify command + Pest test | `app/Console/Commands/DeployNotifyTelegramCommand.php`, `tests/Feature/Console/Commands/DeployNotifyTelegramCommandTest.php` |
-| `toolkit-scripts` | Deployment & lint scripts | `scripts/cloud-build.sh`, `scripts/cloud-deploy.sh`, `resources/js/scripts/lint-dirty.ts` |
+| `toolkit-scripts` | Provisioning, deployment & lint scripts | `scripts/cloud-setup.sh`, `scripts/cloud-build.sh`, `scripts/cloud-deploy.sh`, `resources/js/scripts/lint-dirty.ts` |
 
 Publish individual tags:
 
@@ -416,8 +416,35 @@ The `toolkit-ai` tag publishes AI coding assistant skills and guidelines to `.ai
 | `create-feature-branch` | Start a new feature branch |
 | `finish-feature-branch` | Create a PR when implementation is complete |
 | `land-feature-branch` | Merge an approved PR into main |
+| `provision-laravel-cloud` | Stand up a Laravel Cloud application for the first time |
 
 Guidelines cover: action pattern, domain folders, test enforcement, general conventions, Pest testing, React best practices, and Vitest.
+
+Publishing a skill only puts it on disk. Boost's `skills` array in `boost.json` is what surfaces
+it in the guidelines an agent always has in context, so `toolkit:install` registers every skill
+it finds in `.ai/skills` — including ones the application wrote itself.
+
+### Laravel Cloud provisioning
+
+`scripts/cloud-setup.sh` stands up a Cloud application from two committed files:
+
+| File | Owner | Holds |
+|------|-------|-------|
+| `.cloud/config.json` | Laravel's `cloud` CLI | `organization_id` (the org pin), `application_id` |
+| `.cloud/provision.json` | your application | repository, names, region, database and instance sizing, optional `domain` |
+
+Run it with `composer cloud:setup`, or let the `provision-laravel-cloud` skill gather the inputs
+and run it for you.
+
+It is create-only and re-runnable: it never deploys, deletes, renames, or resizes. Omit `domain`
+and the app runs on its Cloud-assigned URL; add the key later and re-run to create the domain
+then. `APP_URL` is derived from the live environment rather than committed, and environment
+variables still valued `REPLACE_IN_DASHBOARD` are skipped rather than written, so a re-run never
+overwrites a secret you pasted into the dashboard.
+
+Because no `:create` command accepts an `--organization` flag, the pinned `organization_id` is
+the only thing selecting an account. The script refuses to run without it and aborts if a created
+application lands in a different organization than the one pinned.
 
 ## Recommended Composer Scripts
 
@@ -439,6 +466,7 @@ The `toolkit:install` command can merge these scripts into your `composer.json`:
 | `composer test:retry` | `toolkit:retry` |
 | `composer preflight` | `toolkit:preflight` with timeout disabled |
 | `composer optimize` | Cache config, events, routes, and views |
+| `composer cloud:setup` | Provision the Cloud stack (create-only, re-runnable) |
 | `composer cloud:build` | Run cloud build script |
 | `composer cloud:deploy` | Run cloud deploy script |
 

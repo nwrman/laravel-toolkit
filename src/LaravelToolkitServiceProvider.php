@@ -94,6 +94,7 @@ final class LaravelToolkitServiceProvider extends ServiceProvider
         $this->publishes([
             __DIR__.'/../stubs/scripts/cloud-build.sh' => base_path('scripts/cloud-build.sh'),
             __DIR__.'/../stubs/scripts/cloud-deploy.sh' => base_path('scripts/cloud-deploy.sh'),
+            __DIR__.'/../stubs/scripts/cloud-setup.sh' => base_path('scripts/cloud-setup.sh'),
             __DIR__.'/../stubs/scripts/lint-dirty.ts' => base_path('resources/js/scripts/lint-dirty.ts'),
         ], 'toolkit-scripts');
 

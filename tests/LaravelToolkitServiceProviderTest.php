@@ -85,6 +85,18 @@ it('publishes deploy-notify command and its test under toolkit-commands tag', fu
     expect(in_array($testTarget, $tagGroups, true))->toBeTrue();
 });
 
+it('publishes all three cloud scripts under the toolkit-scripts tag', function (): void {
+    $tagGroups = ServiceProvider::$publishGroups['toolkit-scripts'] ?? [];
+
+    foreach (['cloud-build.sh', 'cloud-deploy.sh', 'cloud-setup.sh'] as $script) {
+        expect(in_array(base_path('scripts/'.$script), $tagGroups, true))->toBeTrue();
+    }
+});
+
+it('ships the provisioning skill so it can be published and registered', function (): void {
+    expect(is_file(__DIR__.'/../stubs/ai/skills/provision-laravel-cloud/SKILL.md'))->toBeTrue();
+});
+
 it('is inert when not running in console (register is a no-op)', function (): void {
     /** @var MockInterface&Application $app */
     $app = Mockery::mock(Application::class);

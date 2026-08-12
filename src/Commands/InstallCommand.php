@@ -62,6 +62,7 @@ final class InstallCommand extends Command
         ],
         'cloud:build' => ['sh scripts/cloud-build.sh'],
         'cloud:deploy' => ['sh scripts/cloud-deploy.sh'],
+        'cloud:setup' => ['sh scripts/cloud-setup.sh'],
     ];
 
     #[Override]
@@ -98,6 +99,7 @@ final class InstallCommand extends Command
                 '--tag' => 'toolkit-ai',
                 '--force' => $this->option('force'),
             ]);
+            $this->registerSkillsInBoostConfig();
         }
 
         if (confirm('Install Claude Code test-command guard hook?', true)) {
@@ -386,6 +388,67 @@ final class InstallCommand extends Command
         File::put($settingsPath, is_string($encoded) ? $encoded."\n" : '');
 
         $this->line('  <info>Added Claude Code test-command guard hook to .claude/settings.json.</info>');
+    }
+
+    /**
+     * Register every skill present in .ai/skills with Laravel Boost.
+     *
+     * Publishing a skill only puts it on disk. Boost's `skills` array is what surfaces it in the
+     * generated guidelines an agent always has in context, so an unregistered skill is effectively
+     * invisible — it exists and nothing will ever be told to use it. Scans the directory rather
+     * than a fixed list, so skills the application adds itself are picked up too.
+     */
+    private function registerSkillsInBoostConfig(): void
+    {
+        $boostPath = base_path('boost.json');
+
+        if (! File::exists($boostPath)) {
+            $this->line('  <comment>boost.json not found; skipped skill registration.</comment>');
+
+            return;
+        }
+
+        $skillsPath = base_path('.ai/skills');
+
+        if (! File::isDirectory($skillsPath)) {
+            return;
+        }
+
+        $boostData = json_decode(File::get($boostPath), true);
+
+        if (! is_array($boostData)) {
+            $this->error('Failed to parse boost.json');
+
+            return;
+        }
+
+        /** @var array<int, string> $registered */
+        $registered = array_values(array_filter(
+            is_array($boostData['skills'] ?? null) ? $boostData['skills'] : [],
+            is_string(...),
+        ));
+
+        /** @var array<int, string> $directories */
+        $directories = File::directories($skillsPath);
+
+        $found = array_map(static fn (string $directory): string => basename($directory), $directories);
+
+        sort($found);
+
+        $added = array_values(array_diff($found, $registered));
+
+        if ($added === []) {
+            $this->line('  <info>All skills already registered in boost.json.</info>');
+
+            return;
+        }
+
+        $boostData['skills'] = [...$registered, ...$added];
+
+        $encoded = json_encode($boostData, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        File::put($boostPath, is_string($encoded) ? $encoded."\n" : '');
+
+        $this->line(sprintf('  <info>Registered %d skill(s) in boost.json:</info> %s', count($added), implode(', ', $added)));
     }
 
     /**
