@@ -384,10 +384,36 @@ final class InstallCommand extends Command
 
         data_set($settings, 'hooks.PreToolUse', $preToolUse);
 
-        $encoded = json_encode($settings, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-        File::put($settingsPath, is_string($encoded) ? $encoded."\n" : '');
+        // data_set() takes $settings by reference, so its type widens to mixed here.
+        File::put($settingsPath, $this->encodeTwoSpaceJson(is_array($settings) ? $settings : [])."\n");
 
         $this->line('  <info>Added Claude Code test-command guard hook to .claude/settings.json.</info>');
+    }
+
+    /**
+     * Encode as JSON with two-space indentation.
+     *
+     * PHP's JSON_PRETTY_PRINT is fixed at four spaces, but the JS formatters
+     * consumer apps run over their repos expect two. Writing four means the app's
+     * own `bun run build` fails its format check on a file this installer wrote —
+     * and reformatting it locally only lasts until the next `toolkit:install`.
+     * Emitting the shape the app's tooling wants ends that loop.
+     *
+     * @param  array<array-key, mixed>  $data
+     */
+    private function encodeTwoSpaceJson(array $data): string
+    {
+        $encoded = json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+
+        if (! is_string($encoded)) {
+            return '';
+        }
+
+        return (string) preg_replace_callback(
+            '/^ +/m',
+            static fn (array $matches): string => str_repeat(' ', intdiv(mb_strlen($matches[0]), 2)),
+            $encoded,
+        );
     }
 
     /**
