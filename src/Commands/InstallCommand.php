@@ -428,10 +428,10 @@ final class InstallCommand extends Command
             is_string(...),
         ));
 
-        $found = array_map(
-            static fn (string $directory): string => basename($directory),
-            File::directories($skillsPath),
-        );
+        /** @var array<int, string> $directories */
+        $directories = File::directories($skillsPath);
+
+        $found = array_map(static fn (string $directory): string => basename($directory), $directories);
 
         sort($found);
 
