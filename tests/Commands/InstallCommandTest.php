@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use Illuminate\Support\Facades\File;
+use Illuminate\Testing\PendingCommand;
 
 beforeEach(function (): void {
     $this->tempDir = sys_get_temp_dir().'/toolkit-install-'.uniqid();
@@ -101,6 +102,7 @@ it('skips existing scripts and reports them', function (): void {
             'optimize' => 'my-optimize',
             'cloud:build' => 'my-cloud-build',
             'cloud:deploy' => 'my-cloud-deploy',
+            'cloud:setup' => 'my-cloud-setup',
         ],
     ];
     File::put($composerPath, json_encode($composerData, JSON_PRETTY_PRINT));
@@ -431,5 +433,94 @@ it('silently skips the require-dev migration when the package is in neither sect
         } else {
             File::delete($composerPath);
         }
+    }
+});
+
+/**
+ * Answer the installer's prompts, opting into the AI-skills step only.
+ */
+function publishSkillsOnly(object $test): PendingCommand
+{
+    /** @var PendingCommand $pending */
+    $pending = $test->artisan('toolkit:install')
+        ->expectsConfirmation('Move nwrman/laravel-toolkit to require-dev?', 'no')
+        ->expectsConfirmation('Merge recommended composer scripts?', 'no')
+        ->expectsConfirmation('Standardize composer test:* scripts to the toolkit convention (overwrites existing test:* / test)?', 'no')
+        ->expectsConfirmation('Publish AI skills & guidelines?', 'yes')
+        ->expectsConfirmation('Install Claude Code test-command guard hook?', 'no')
+        ->expectsConfirmation('Publish GitHub Actions workflow?', 'no')
+        ->expectsConfirmation('Publish static analysis configs (pint.json, phpstan.neon)?', 'no')
+        ->expectsConfirmation('Publish deploy notification command (and test)?', 'no')
+        ->expectsConfirmation('Publish deployment scripts?', 'no');
+
+    return $pending;
+}
+
+it('registers unregistered skills from .ai/skills in boost.json', function (): void {
+    $boostPath = base_path('boost.json');
+    $skillsPath = base_path('.ai/skills');
+
+    File::put($boostPath, json_encode(['guidelines' => true, 'skills' => ['already-there']], JSON_PRETTY_PRINT));
+    File::ensureDirectoryExists($skillsPath.'/hand-written-skill');
+
+    try {
+        publishSkillsOnly($this)->assertExitCode(0);
+
+        /** @var array{skills: array<int, string>} $result */
+        $result = json_decode(File::get($boostPath), true);
+
+        // Pre-existing registrations survive, and a skill that was only ever on disk is picked up.
+        expect($result['skills'])->toContain('already-there')
+            ->toContain('hand-written-skill')
+            ->toContain('provision-laravel-cloud')
+            ->toContain('run-preflight');
+
+        // Unrelated keys are left alone.
+        expect($result['guidelines'])->toBeTrue();
+    } finally {
+        File::delete($boostPath);
+        File::deleteDirectory(base_path('.ai'));
+    }
+});
+
+it('does not duplicate skills already registered in boost.json', function (): void {
+    $boostPath = base_path('boost.json');
+    $skillsPath = base_path('.ai/skills');
+
+    File::ensureDirectoryExists($skillsPath.'/solo-skill');
+    File::put($boostPath, json_encode(['skills' => ['solo-skill']], JSON_PRETTY_PRINT));
+
+    try {
+        publishSkillsOnly($this)->assertExitCode(0);
+
+        /** @var array{skills: array<int, string>} $result */
+        $result = json_decode(File::get($boostPath), true);
+
+        $occurrences = array_count_values($result['skills']);
+
+        expect($occurrences['solo-skill'])->toBe(1);
+    } finally {
+        File::delete($boostPath);
+        File::deleteDirectory(base_path('.ai'));
+    }
+});
+
+it('skips skill registration when boost.json is absent', function (): void {
+    $boostPath = base_path('boost.json');
+    $originalContent = File::exists($boostPath) ? File::get($boostPath) : null;
+    File::delete($boostPath);
+
+    try {
+        publishSkillsOnly($this)
+            ->expectsOutputToContain('boost.json not found')
+            ->assertExitCode(0);
+
+        expect(File::exists($boostPath))->toBeFalse();
+    } finally {
+        if ($originalContent !== null) {
+            File::put($boostPath, $originalContent);
+        }
+
+        File::deleteDirectory(base_path('.ai'));
     }
 });
