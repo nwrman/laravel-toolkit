@@ -1,6 +1,7 @@
-includes:
-    - vendor/larastan/larastan/extension.neon
-    - vendor/phpstan/phpstan-deprecation-rules/rules.neon
+# larastan, phpstan-deprecation-rules and phpstan-phpunit are registered automatically by
+# phpstan/extension-installer (allowed in composer.json's config.allow-plugins). Including them
+# by hand as well makes PHPStan abort with "These files are included multiple times" before it
+# analyses anything — a passing exit code that never ran.
 
 parameters:
     level: max

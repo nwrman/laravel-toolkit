@@ -122,8 +122,10 @@ final class TestReportCommand extends Command
     {
         $suites = $this->suites();
 
-        if ($this->option('suite')) {
-            $suiteStr = mb_strtolower(mb_trim((string) $this->option('suite')));
+        $suite = $this->option('suite');
+
+        if (is_string($suite) && $suite !== '') {
+            $suiteStr = mb_strtolower(mb_trim($suite));
 
             return array_filter(array_map(trim(...), explode(',', $suiteStr)));
         }

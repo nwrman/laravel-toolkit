@@ -43,7 +43,9 @@ final class LaravelToolkitServiceProvider extends ServiceProvider
 
         // Deep-merge gates so consumers can override a single gate without losing others
         if (isset($published['gates']) && is_array($published['gates'])) {
-            $merged = array_replace_recursive($package['gates'] ?? [], $published['gates']);
+            $packageGates = is_array($package['gates'] ?? null) ? $package['gates'] : [];
+
+            $merged = array_replace_recursive($packageGates, $published['gates']);
 
             // Allow null to remove a gate
             $merged = array_filter($merged, fn (mixed $value): bool => $value !== null);
