@@ -349,13 +349,13 @@ final class InstallCommand extends Command
             }
         }
 
-        /** @var array<int, mixed> $preToolUse */
         $preToolUse = data_get($settings, 'hooks.PreToolUse', []);
 
         if (! is_array($preToolUse)) {
             $preToolUse = [];
         }
 
+        /** @var array<int, mixed> $preToolUse */
         foreach ($preToolUse as $entry) {
             if (! is_array($entry)) {
                 continue;
@@ -365,7 +365,9 @@ final class InstallCommand extends Command
             $hooks = is_array($entry['hooks'] ?? null) ? $entry['hooks'] : [];
 
             foreach ($hooks as $hook) {
-                if (is_array($hook) && str_contains((string) ($hook['command'] ?? ''), 'enforce-test-command.php')) {
+                $command = is_array($hook) ? ($hook['command'] ?? null) : null;
+
+                if (is_string($command) && str_contains($command, 'enforce-test-command.php')) {
                     $this->line('  <info>Claude Code guard hook already present in .claude/settings.json.</info>');
 
                     return;
