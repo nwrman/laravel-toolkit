@@ -433,8 +433,12 @@ it finds in `.ai/skills` — including ones the application wrote itself.
 | `.cloud/config.json` | Laravel's `cloud` CLI | `organization_id` (the org pin), `application_id` |
 | `.cloud/provision.json` | your application | repository, names, region, database and instance sizing, optional `domain` |
 
-Run it with `composer cloud:setup`, or let the `provision-laravel-cloud` skill gather the inputs
-and run it for you.
+Get the files in place with `php artisan toolkit:install` — it publishes the scripts *and* adds
+the `cloud:setup` composer script and registers the skill in `boost.json`. `vendor:publish
+--tag=toolkit-scripts` copies the files only, leaving both of those to be wired by hand.
+
+Then run it with `composer cloud:setup`, or let the `provision-laravel-cloud` skill gather the
+inputs and run it for you.
 
 It is create-only and re-runnable: it never deploys, deletes, renames, or resizes. Omit `domain`
 and the app runs on its Cloud-assigned URL; add the key later and re-run to create the domain

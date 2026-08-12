@@ -15,8 +15,10 @@ composer optimize || {
     exit 1
 }
 
-# Symlink the public disk. Idempotent, and a no-op for apps that serve uploads from a bucket —
-# but without it an app storing media on the public disk returns 404s for every file it wrote.
-php artisan storage:link || true
+# No `storage:link` here on purpose. Laravel Cloud builds a fresh image per deploy and replaces
+# the running container, so anything written to the local public disk is gone on the next ship
+# and is not shared between replicas. Linking it would make the deploy log read as though uploads
+# were handled when they are not. Serve user uploads from an object storage bucket instead — see
+# the provision-laravel-cloud skill.
 
 php artisan deploy:notify-telegram succeeded --stage=deploy || true
