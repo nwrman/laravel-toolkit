@@ -110,6 +110,44 @@ Do not put `APP_URL` in the file. The script derives it — the custom domain wh
 configured, otherwise the Cloud-assigned URL — because the correct value does not exist until
 the environment does.
 
+**Never declare credentials Cloud injects.** When a database or a bucket is attached to an
+environment, Laravel Cloud injects everything needed to reach it — `DB_*` for databases,
+`FILESYSTEM_DISK` and the S3-compatible `AWS_*` variables for buckets. They will not appear in
+the environment's declared variable list, and writing them yourself overrides working values
+with stale ones.
+
+## Object storage
+
+Only relevant when the app stores uploads — media library avatars, user documents, anything
+written at runtime. Cloud's filesystem does not survive a deploy, so an app writing to the local
+`public` disk loses every file each time it ships. That is a bucket, not a `storage:link`.
+
+**This part cannot be scripted.** The CLI has `bucket:create`, `bucket:update` and
+`bucket-key:*`, but there is no attach command and `environment:update` has no `--bucket-id`.
+Attaching a bucket — which is what sets the disk name and triggers credential injection — is
+done on the environment's infrastructure canvas in the dashboard. Creating a bucket from the CLI
+without attaching it leaves a resource that looks provisioned and does nothing, so do not.
+
+Walk the user through it:
+
+1. Confirm `league/flysystem-aws-s3-v3` is in `composer.json`. Cloud object storage requires it,
+   and its absence only shows up at the first upload.
+2. Dashboard → the environment's infrastructure canvas → **Add bucket** → Laravel Object Storage.
+3. Choose a **disk name** — this is what `Storage::disk('...')` takes. Marking it the default
+   disk means the app can call `Storage::` with no disk name.
+4. Choose **visibility**. Public for avatars and anything served straight to a browser; private
+   for personal documents, reached through `Storage::temporaryUrl`. It is set per bucket and
+   cannot be mixed within one.
+5. **Redeploy** — the injected variables only reach the app on the next deploy.
+
+Two traps worth naming before the first upload:
+
+- `AWS_URL` is **not** injected for public buckets. If the app reads it, copy the value from the
+  bucket settings page into the environment's own variables by hand.
+- Cloudflare R2 backs these buckets and does not support per-object ACLs. Do not set
+  `'visibility' => 'public'` in the disk's config in `config/filesystems.php` — R2 rejects it
+  with `NotImplemented`. Bucket-level visibility governs access instead.
+
 ## Run it
 
 ```sh
