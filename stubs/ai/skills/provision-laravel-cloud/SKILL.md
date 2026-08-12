@@ -19,6 +19,16 @@ it as soon as the stack exists.
 Do not move `organization_id` out of `.cloud/config.json`. The CLI reads it from there, and it
 is the only thing that selects an organization.
 
+## Before you start
+
+If `scripts/cloud-setup.sh` is missing, run **`php artisan toolkit:install`**. Do not reach for
+`vendor:publish` — the installer publishes the same files *and* adds the `cloud:setup` composer
+script and registers this skill in `boost.json`, neither of which `vendor:publish` does. Taking
+the publish path means wiring both by hand and usually forgetting one.
+
+If the app stores uploads, check `league/flysystem-aws-s3-v3` is in `composer.json` now rather
+than at the first upload. See the object storage section below.
+
 ## Get the organization right before anything else
 
 There is no `--organization` flag on any `:create` command. The organization is ambient state,
@@ -34,11 +44,18 @@ Multiple API tokens found. Set organization_id in .cloud/config.json
 That failure is a safety net, not a bug. It stops guessing; it does not stop you pinning the
 *wrong* organization. So before creating anything:
 
-1. Read `organization_id` from `.cloud/config.json`. If absent, run `cloud repo:config`.
-2. Resolve its name: `cloud application:list --json -n --fields=organization.id,organization.name`.
-3. Check that name against the repository owner in `git remote -v`. A repo under a client's
+1. Read `organization_id` from `.cloud/config.json`. If absent, ask the **user** to run
+   `cloud repo:config` — it is interactive, so you cannot run it for them.
+2. **Then delete `application_id` from `.cloud/config.json`.** `repo:config` offers only
+   *existing* applications and has no "none yet" option, so for a never-provisioned app it pins
+   some unrelated application alongside the organization. Leave it in place and `cloud-setup.sh`
+   adopts that application instead of creating yours. The script writes the correct id back once
+   it has one.
+3. Resolve the organization name:
+   `cloud application:list --json -n --fields=organization.id,organization.name`.
+4. Check that name against the repository owner in `git remote -v`. A repo under a client's
    GitHub organization almost never belongs in a personal Cloud organization.
-4. **Show the user the organization name and the repository, and get explicit confirmation.**
+5. **Show the user the organization name and the repository, and get explicit confirmation.**
    Never skip this because the pin "looks right".
 
 The script repeats the check and aborts if a created application lands somewhere unexpected,
@@ -48,21 +65,33 @@ one.
 ## Choose values, never inherit them
 
 Do not copy sizes, regions, or database types from another project in this lineage. They were
-that project's answers at that moment. Ask Cloud what it offers today:
+that project's answers at that moment. Ask Cloud what it offers today.
 
-- `cloud instance:sizes --json -n`
-- `cloud database-cluster:create -h` for current cluster types
-- `cloud -h` and `cloud <command> -h` for anything else — never hardcode a signature
+**Instance sizes** — `cloud instance:sizes --json -n`.
+
+**Regions** — there is no `region:list`, and `application:create --region` will not enumerate.
+The only way to list them is the IP address endpoint, keyed by region:
+
+```sh
+cloud ip:addresses --json -n | php -r '$d=json_decode(stream_get_contents(STDIN),true); echo implode("\n", array_keys($d));'
+```
+
+**Database cluster types** — `--type` accepts a value it will not enumerate. The list lives in
+the CLI source, so read it rather than guessing:
+`~/.config/composer/vendor/laravel/cloud-cli/app/Enums/DatabaseClusterPreset.php`. That file also
+carries the Dev/Prod/Scale sizing behind each preset, which is useful when picking small.
+
+For anything else, `cloud -h` and `cloud <command> -h`. Never hardcode a signature.
 
 Then propose the **smallest thing that works** and let the user override. Projects start small
 and grow; scaling up later is a deliberate manual step in the dashboard, not something this
 script does.
 
-Regions deserve care and have a shelf life. List what exists rather than trusting a remembered
-answer — a region that did not exist last quarter may exist now. As a worked example: in June
-2026 talok-app chose `us-east-2` for Los Angeles callers because Laravel Cloud had no US-West
-region at all and Ohio was the closer of the two US options. Verify that is still true before
-repeating it.
+Regions have a shelf life, so run the command rather than trusting a remembered answer. As a
+worked example: on 2026-08-12 it returned ten regions with **no Latin America and no US-West** —
+which is why talok-app picked `us-east-2` for Los Angeles callers, Ohio being the nearer of the
+two US options. If that is still the shape of the list, an audience anywhere in the Americas
+outside the US East coast is choosing between two compromises, not finding a good fit.
 
 ## Gather the inputs
 

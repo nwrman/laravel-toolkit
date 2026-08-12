@@ -4,10 +4,19 @@ declare(strict_types=1);
 
 namespace App\Console\Commands;
 
+use Illuminate\Console\Attributes\Description;
+use Illuminate\Console\Attributes\Signature;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Http;
-use Override;
 
+// Attributes rather than $signature / $description properties: consumer apps run Rector with the
+// Laravel sets, which rewrites the property form on the first `composer lint` — and the next
+// `vendor:publish --force` reverts it. Publishing the post-Rector shape ends that loop.
+#[Description('Send a Laravel Cloud deployment notification to Telegram')]
+#[Signature('deploy:notify-telegram
+        {status : Deployment status (started|failed|succeeded)}
+        {--stage=deploy : Deployment stage (build|deploy)}
+        {--reason= : Optional failure reason}')]
 final class DeployNotifyTelegramCommand extends Command
 {
     private const array VALID_STATUSES = ['started', 'failed', 'succeeded'];
@@ -25,15 +34,6 @@ final class DeployNotifyTelegramCommand extends Command
         'failed' => '❌',
         'succeeded' => '✅',
     ];
-
-    #[Override]
-    protected $signature = 'deploy:notify-telegram
-        {status : Deployment status (started|failed|succeeded)}
-        {--stage=deploy : Deployment stage (build|deploy)}
-        {--reason= : Optional failure reason}';
-
-    #[Override]
-    protected $description = 'Send a Laravel Cloud deployment notification to Telegram';
 
     public function handle(): int
     {
