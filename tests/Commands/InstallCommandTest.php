@@ -220,6 +220,33 @@ it('injects --env=testing into test scripts when a committed .env.testing exists
     }
 });
 
+it('writes .claude/settings.json with two-space indentation', function (): void {
+    $claudeDir = base_path('.claude');
+
+    try {
+        $this->artisan('toolkit:install')
+            ->expectsConfirmation('Move nwrman/laravel-toolkit to require-dev?', 'no')
+            ->expectsConfirmation('Merge recommended composer scripts?', 'no')
+            ->expectsConfirmation('Standardize composer test:* scripts to the toolkit convention (overwrites existing test:* / test)?', 'no')
+            ->expectsConfirmation('Publish AI skills & guidelines?', 'no')
+            ->expectsConfirmation('Install Claude Code test-command guard hook?', 'yes')
+            ->expectsConfirmation('Publish GitHub Actions workflow?', 'no')
+            ->expectsConfirmation('Publish static analysis configs (pint.json, phpstan.neon)?', 'no')
+            ->expectsConfirmation('Publish deploy notification command (and test)?', 'no')
+            ->expectsConfirmation('Publish deployment scripts?', 'no')
+            ->assertExitCode(0);
+
+        $contents = File::get($claudeDir.'/settings.json');
+
+        // Four-space indentation is what JSON_PRETTY_PRINT emits, and it fails the
+        // JS formatter the consumer app runs in `bun run build`.
+        expect($contents)->toContain("\n  \"hooks\"")
+            ->and($contents)->not->toContain("\n    \"hooks\"");
+    } finally {
+        File::deleteDirectory($claudeDir);
+    }
+});
+
 it('publishes the guard hook and merges the PreToolUse entry into .claude/settings.json', function (): void {
     $claudeDir = base_path('.claude');
 
