@@ -5,11 +5,15 @@ declare(strict_types=1);
 namespace Nwrman\LaravelToolkit\Concerns;
 
 use FilesystemIterator;
+use Illuminate\Console\Command;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Process;
 use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
 
+/**
+ * @mixin Command
+ */
 trait ManagesFrontendBuild
 {
     /**
@@ -70,7 +74,7 @@ trait ManagesFrontendBuild
 
     private function ensureFrontendBuild(): bool
     {
-        if (method_exists($this, 'option') && $this->option('force-build')) {
+        if ($this->hasOption('force-build') && $this->option('force-build')) {
             $this->line('<comment>--force-build:</comment> rebuilding frontend assets...');
             // @codeCoverageIgnoreStart
         } elseif ($this->needsBuild()) {

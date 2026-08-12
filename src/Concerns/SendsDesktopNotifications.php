@@ -4,13 +4,19 @@ declare(strict_types=1);
 
 namespace Nwrman\LaravelToolkit\Concerns;
 
+use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Process;
 
+/**
+ * @mixin Command
+ */
 trait SendsDesktopNotifications
 {
     private function notify(string $title, string $message, string $sound): void
     {
-        if (method_exists($this, 'hasOption') && $this->hasOption('no-notify') && $this->option('no-notify')) {
+        // hasOption() asks whether the option is *defined* on this command — not every command
+        // using this trait declares --no-notify, and option() would throw for those.
+        if ($this->hasOption('no-notify') && $this->option('no-notify')) {
             return;
         }
 
