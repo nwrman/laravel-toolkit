@@ -50,6 +50,8 @@ it('blocks raw test runners and the bare composer test', function (string $comma
     'chained after cd' => ['cd app && php artisan test'],
     'chained after install' => ['composer install; composer test'],
     'inside a command substitution' => ['echo "$(pest --parallel)"'],
+    'after non-ASCII text' => ['gh pr create --body "la sesión — ya quedó" && pest'],
+    'after a here-document with accents' => ["cat <<EOF > notas.md\nla sesión — quedó\nEOF\nphp artisan test"],
     'after a here-document closes' => ["cat <<'EOF' > notes.md\npest is the runner here\nEOF\npest --parallel"],
     'piped into a filter' => ['php artisan test | tail -20'],
 ]);
@@ -95,6 +97,9 @@ after: composer test:feature"'],
     'unquoted here-document body' => ["cat <<EOF > notes.md\npest | phpunit\nEOF"],
     'commit message body' => ['git commit -m "test: drop phpunit" -m "phpunit is gone; pest replaces it"'],
     'single-quoted body' => ["gh pr create --body 'pest | phpunit (both)'"],
+    'non-ASCII body' => ['gh pr create --body "| Módulo | Runner |
+| Sesión | pest |"'],
+    'non-ASCII here-document' => ["gh pr create --body \"\$(cat <<EOF\nla sesión — pest | php artisan test\nEOF\n)\""],
 ]);
 
 it('fails open on empty or malformed input', function (): void {

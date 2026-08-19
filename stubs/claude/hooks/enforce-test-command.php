@@ -73,11 +73,18 @@ exit(0);
  * The scanner keeps one frame per command context: the top level, plus one for each
  * open `$(`. Only the frame's own double-quote state decides whether text is data, so
  * a substitution inside a quoted argument is still read as a command.
+ *
+ * It walks a character array rather than indexing the string. This script is published
+ * into consumer apps and reformatted by whatever Pint ruleset they run; one that turns
+ * `strlen`/`substr` into their `mb_` forms would leave a byte index measured against a
+ * character count, ending the walk at the first non-ASCII byte and leaving the rest of
+ * the command unread. Character units throughout survive that rewrite.
  */
 function blankLiterals(string $command): string
 {
     $blanked = '';
-    $length = strlen($command);
+    $characters = mb_str_split($command);
+    $length = count($characters);
     $index = 0;
 
     /** @var list<string> $pendingHeredocs Delimiters awaiting their body, in the order bash consumes them. */
@@ -87,7 +94,7 @@ function blankLiterals(string $command): string
     $frames = [false];
 
     while ($index < $length) {
-        $character = $command[$index];
+        $character = $characters[$index];
         $isData = $frames[count($frames) - 1];
 
         // A backslash escape can hide a quote or a separator; neutralise both bytes.
@@ -107,7 +114,7 @@ function blankLiterals(string $command): string
         }
 
         // `$(` opens a fresh command context, even in the middle of a quoted argument.
-        if ($character === '$' && substr($command, $index, 2) === '$(') {
+        if ($character === '$' && ($characters[$index + 1] ?? '') === '(') {
             $frames[] = false;
             $blanked .= ' (';
             $index += 2;
@@ -145,20 +152,20 @@ function blankLiterals(string $command): string
         }
 
         // `<<DELIM`, `<<-DELIM`, `<<'DELIM'`, `<<"DELIM"` — but not the `<<<` here-string.
-        if ($character === '<' && substr($command, $index, 3) !== '<<<'
-            && preg_match('/^<<-?\s*(?:"([^"\n]+)"|\'([^\'\n]+)\'|([A-Za-z_][A-Za-z0-9_]*))/', substr($command, $index), $matches) === 1) {
+        if ($character === '<' && ($characters[$index + 2] ?? '') !== '<'
+            && preg_match('/^<<-?\s*(?:"([^"\n]+)"|\'([^\'\n]+)\'|([A-Za-z_][A-Za-z0-9_]*))/', mb_substr($command, $index), $matches) === 1) {
             $pendingHeredocs[] = $matches[1] !== '' ? $matches[1] : ($matches[2] !== '' ? $matches[2] : ($matches[3] ?? ''));
-            $blanked .= str_repeat(' ', strlen($matches[0]));
-            $index += strlen($matches[0]);
+            $blanked .= str_repeat(' ', mb_strlen($matches[0]));
+            $index += mb_strlen($matches[0]);
 
             continue;
         }
 
         // Single quotes are literal all the way to their close — no substitution inside.
         if ($character === "'") {
-            $close = strpos($command, "'", $index + 1);
+            $close = mb_strpos($command, "'", $index + 1);
             $end = $close === false ? $length : $close + 1;
-            $blanked .= blankPreservingNewlines(substr($command, $index, $end - $index));
+            $blanked .= blankPreservingNewlines(mb_substr($command, $index, $end - $index));
             $index = $end;
 
             continue;
@@ -177,13 +184,13 @@ function blankLiterals(string $command): string
  */
 function skipHeredocBody(string $command, int $index, string $delimiter, string &$blanked): int
 {
-    $length = strlen($command);
+    $length = mb_strlen($command);
 
     while ($index < $length) {
-        $newline = strpos($command, "\n", $index);
-        $line = $newline === false ? substr($command, $index) : substr($command, $index, $newline - $index);
+        $newline = mb_strpos($command, "\n", $index);
+        $line = $newline === false ? mb_substr($command, $index) : mb_substr($command, $index, $newline - $index);
         $index = $newline === false ? $length : $newline + 1;
-        $blanked .= str_repeat(' ', strlen($line))."\n";
+        $blanked .= str_repeat(' ', mb_strlen($line))."\n";
 
         // `<<-` strips leading tabs from the terminator; trimming covers both forms.
         if (trim($line) === $delimiter) {
