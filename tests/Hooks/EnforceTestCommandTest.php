@@ -49,6 +49,11 @@ it('blocks raw test runners and the bare composer test', function (string $comma
     'env-prefixed pest' => ['XDEBUG_MODE=coverage pest --parallel'],
     'chained after cd' => ['cd app && php artisan test'],
     'chained after install' => ['composer install; composer test'],
+    'inside a command substitution' => ['echo "$(pest --parallel)"'],
+    'after non-ASCII text' => ['gh pr create --body "la sesión — ya quedó" && pest'],
+    'after a here-document with accents' => ["cat <<EOF > notas.md\nla sesión — quedó\nEOF\nphp artisan test"],
+    'after a here-document closes' => ["cat <<'EOF' > notes.md\npest is the runner here\nEOF\npest --parallel"],
+    'piped into a filter' => ['php artisan test | tail -20'],
 ]);
 
 it('allows toolkit wrappers, filtered debugging, and frontend runners', function (string $command): void {
@@ -71,6 +76,30 @@ it('allows toolkit wrappers, filtered debugging, and frontend runners', function
     'synthetic e2e' => ['composer test:synthetic'],
     'prose mentioning pest' => ['git commit -m "fix pest setup"'],
     'unrelated command' => ['php artisan migrate'],
+]);
+
+it('judges commands, not the prose they carry', function (string $command): void {
+    expect(guardDenies($command))->toBeFalse();
+    expect(trim(runGuard($command)['output']))->toBe('');
+})->with([
+    // Each of these tripped the guard before literals were blanked: a PR body is split
+    // on the pipes, parens and line breaks of its own prose, and the pieces read as
+    // commands.
+    'table cell in a quoted body' => ['gh pr create --body "| Suite | Runner |
+| Feature | pest |"'],
+    'parenthetical in a quoted body' => ['gh pr create --body "now runs on (pest 4)"'],
+    'pipe-separated prose' => ['gh pr create --body "runners: vitest | pest | phpunit"'],
+    'line starting with the runner' => ['gh pr create --body "before:
+php artisan test
+after: composer test:feature"'],
+    'here-document body' => ["gh pr create --title 'Speed up the suite' --body \"\$(cat <<'EOF'\n## Tests\n\n| Suite | Runner |\n| Feature | pest |\n\nWas: php artisan test\nNow: composer test:feature (pest 4)\nEOF\n)\""],
+    'indented here-document body' => ["cat <<-EOF > notes.md\n\tphp artisan test\n\tEOF"],
+    'unquoted here-document body' => ["cat <<EOF > notes.md\npest | phpunit\nEOF"],
+    'commit message body' => ['git commit -m "test: drop phpunit" -m "phpunit is gone; pest replaces it"'],
+    'single-quoted body' => ["gh pr create --body 'pest | phpunit (both)'"],
+    'non-ASCII body' => ['gh pr create --body "| Módulo | Runner |
+| Sesión | pest |"'],
+    'non-ASCII here-document' => ["gh pr create --body \"\$(cat <<EOF\nla sesión — pest | php artisan test\nEOF\n)\""],
 ]);
 
 it('fails open on empty or malformed input', function (): void {
