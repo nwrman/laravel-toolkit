@@ -23,7 +23,7 @@
         "illuminate/http": "^13.0",
         "illuminate/process": "^13.0",
         "illuminate/support": "^13.0",
-        "shipfastlabs/agent-detector": "^1.1"
+        "laravel/agent-detector": "^2.0"
     },
     "require-dev": {
         "laravel/pint": "^1.14",

@@ -23,3 +23,8 @@ composer update
 ```
 
 This will migrate the package to `require-dev`, publish the `DeployNotifyTelegramCommand` stub + its test into your app, and refresh the lock file. Commit the new files under `app/Console/Commands/` and `tests/Feature/Console/Commands/`.
+
+### Changed
+
+- `shipfastlabs/agent-detector` is replaced by `laravel/agent-detector` (`^2.0`). The original was marked abandoned by its author, who names this as the successor; it is the same package under the Laravel vendor. Every app installing this toolkit was getting an abandonment warning on `composer install` that it could not fix on its own, because the requirement lives here.
+- The API is unchanged — `AgentDetector::detect()->isAgent` — so the only source change is the import namespace, `AgentDetector\AgentDetector` to `Laravel\AgentDetector\AgentDetector`. Nothing in a consuming app needs to change beyond `composer update`.
