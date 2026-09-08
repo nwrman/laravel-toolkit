@@ -4,13 +4,13 @@ declare(strict_types=1);
 
 namespace Nwrman\LaravelToolkit\Commands;
 
-use AgentDetector\AgentDetector;
 use Illuminate\Console\Command;
 use Illuminate\Console\Prohibitable;
 use Illuminate\Process\InvokedProcess;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Process;
 use Illuminate\Support\Sleep;
+use Laravel\AgentDetector\AgentDetector;
 use Nwrman\LaravelToolkit\Concerns\ManagesFrontendBuild;
 use Nwrman\LaravelToolkit\Concerns\SendsDesktopNotifications;
 use Override;
