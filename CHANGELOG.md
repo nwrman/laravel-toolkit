@@ -2,7 +2,7 @@
 
 All notable changes to `laravel-toolkit` will be documented in this file.
 
-## Unreleased
+## v0.2.0 — 2026-10-13
 
 ### Agents check a change in the right order
 
@@ -39,6 +39,8 @@ php artisan boost:update
 ```
 
 Reorder your own `test:ci` by hand if you want the fast-fail order; the installer never overwrites it.
+
+## v0.1.x
 
 ### BREAKING
 
