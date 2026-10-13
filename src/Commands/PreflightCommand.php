@@ -9,7 +9,6 @@ use Illuminate\Console\Prohibitable;
 use Illuminate\Process\InvokedProcess;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Process;
-use Illuminate\Support\Sleep;
 use Laravel\AgentDetector\AgentDetector;
 use Nwrman\LaravelToolkit\Concerns\ManagesFrontendBuild;
 use Nwrman\LaravelToolkit\Concerns\SendsDesktopNotifications;
@@ -276,7 +275,11 @@ final class PreflightCommand extends Command
             }
 
             $frame++; // @codeCoverageIgnore
-            Sleep::usleep(150_000); // @codeCoverageIgnore
+
+            // Native usleep(), never Illuminate\Support\Sleep: an app booted with
+            // --env=testing may have Sleep faked, which turns this wait into a busy-spin
+            // that grows a static array until the parent runs out of memory (#8).
+            usleep(150_000); // @codeCoverageIgnore
         }
 
         $this->newLine();
