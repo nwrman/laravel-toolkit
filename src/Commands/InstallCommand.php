@@ -14,7 +14,20 @@ final class InstallCommand extends Command
 {
     private const string PACKAGE_NAME = 'nwrman/laravel-toolkit';
 
-    private const string GUARD_HOOK_COMMAND = 'php "$CLAUDE_PROJECT_DIR/.claude/hooks/enforce-test-command.php"';
+    /**
+     * The guard runs from vendor/, so `composer update` keeps it current. Installs
+     * before this used a copy published to .claude/hooks/, frozen at install time.
+     */
+    private const string GUARD_HOOK_COMMAND = 'php "$CLAUDE_PROJECT_DIR/vendor/nwrman/laravel-toolkit/bin/enforce-test-command.php"';
+
+    private const string LEGACY_GUARD_HOOK_PATH = '.claude/hooks/enforce-test-command.php';
+
+    /**
+     * Published by toolkit versions that shipped the "Running Tests" guideline as a
+     * copy. Boost now reads it from this package, and a leftover copy overrides
+     * Boost's own test guideline with the old advice.
+     */
+    private const string LEGACY_TEST_GUIDELINE_PATH = '.ai/guidelines/enforce-tests.blade.php';
 
     /**
      * Non-routing recommended scripts. Test-routing scripts are built dynamically
@@ -45,13 +58,6 @@ final class InstallCommand extends Command
         'test:types' => [
             'phpstan',
             'bun run test:types',
-        ],
-        'test:ci' => [
-            '@test:type-coverage',
-            'XDEBUG_MODE="coverage" pest --parallel --coverage --exactly=100.0',
-            'bun run test:coverage',
-            '@test:lint',
-            '@test:types',
         ],
         'optimize' => [
             '@php artisan optimize',
@@ -100,13 +106,11 @@ final class InstallCommand extends Command
                 '--force' => $this->option('force'),
             ]);
             $this->registerSkillsInBoostConfig();
+            $this->registerGuidelinesInBoostConfig();
+            $this->warnAboutLegacyTestGuideline();
         }
 
         if (confirm('Install Claude Code test-command guard hook?', true)) {
-            $this->call('vendor:publish', [
-                '--tag' => 'toolkit-claude',
-                '--force' => $this->option('force'),
-            ]);
             $this->mergeClaudeSettings();
         }
 
@@ -302,7 +306,29 @@ final class InstallCommand extends Command
      */
     private function recommendedScripts(): array
     {
-        return array_merge(self::RECOMMENDED_SCRIPTS, $this->canonicalTestScripts());
+        return array_merge(self::RECOMMENDED_SCRIPTS, ['test:ci' => $this->ciScript()], $this->canonicalTestScripts());
+    }
+
+    /**
+     * What CI runs, in the order that fails fastest: lint and types take seconds, the
+     * coverage run takes minutes, so a lint error surfaces before the suite instead of
+     * after it. TIA stays out wherever this Pest has it: CI runs every test against a
+     * clean checkout, and a "would CI pass?" check has to do the same. Pest without
+     * TIA does not know --no-tia, hence the check.
+     *
+     * @return array<int, string>
+     */
+    private function ciScript(): array
+    {
+        $noTia = class_exists('Pest\\Plugins\\Tia') ? ' --no-tia' : '';
+
+        return [
+            '@test:lint',
+            '@test:types',
+            '@test:type-coverage',
+            'XDEBUG_MODE="coverage" pest --parallel --coverage --exactly=100.0'.$noTia,
+            'bun run test:coverage',
+        ];
     }
 
     /**
@@ -355,8 +381,11 @@ final class InstallCommand extends Command
             $preToolUse = [];
         }
 
+        $found = false;
+        $migrated = false;
+
         /** @var array<int, mixed> $preToolUse */
-        foreach ($preToolUse as $entry) {
+        foreach ($preToolUse as $entryIndex => $entry) {
             if (! is_array($entry)) {
                 continue;
             }
@@ -364,30 +393,109 @@ final class InstallCommand extends Command
             /** @var array<int, mixed> $hooks */
             $hooks = is_array($entry['hooks'] ?? null) ? $entry['hooks'] : [];
 
-            foreach ($hooks as $hook) {
+            foreach ($hooks as $hookIndex => $hook) {
                 $command = is_array($hook) ? ($hook['command'] ?? null) : null;
 
-                if (is_string($command) && str_contains($command, 'enforce-test-command.php')) {
-                    $this->line('  <info>Claude Code guard hook already present in .claude/settings.json.</info>');
+                if (! is_array($hook) || ! is_string($command) || ! str_contains($command, 'enforce-test-command.php')) {
+                    continue;
+                }
 
-                    return;
+                $found = true;
+
+                // An entry pointing at the old published copy keeps running that frozen
+                // copy forever. Repoint it at vendor/ so composer update reaches it.
+                if ($command !== self::GUARD_HOOK_COMMAND) {
+                    $hooks[$hookIndex] = [...$hook, 'command' => self::GUARD_HOOK_COMMAND];
+                    $migrated = true;
                 }
             }
+
+            $entry['hooks'] = $hooks;
+            $preToolUse[$entryIndex] = $entry;
         }
 
-        $preToolUse[] = [
-            'matcher' => 'Bash',
-            'hooks' => [
-                ['type' => 'command', 'command' => self::GUARD_HOOK_COMMAND],
-            ],
-        ];
+        if ($found && ! $migrated) {
+            $this->line('  <info>Claude Code guard hook already present in .claude/settings.json.</info>');
+            $this->warnAboutLegacyGuardHook();
+
+            return;
+        }
+
+        if (! $found) {
+            $preToolUse[] = [
+                'matcher' => 'Bash',
+                'hooks' => [
+                    ['type' => 'command', 'command' => self::GUARD_HOOK_COMMAND],
+                ],
+            ];
+        }
 
         data_set($settings, 'hooks.PreToolUse', $preToolUse);
 
         // data_set() takes $settings by reference, so its type widens to mixed here.
         File::put($settingsPath, $this->encodeTwoSpaceJson(is_array($settings) ? $settings : [])."\n");
 
-        $this->line('  <info>Added Claude Code test-command guard hook to .claude/settings.json.</info>');
+        $this->line($migrated
+            ? '  <info>Pointed the Claude Code guard hook in .claude/settings.json at vendor/, so composer update keeps it current.</info>'
+            : '  <info>Added Claude Code test-command guard hook to .claude/settings.json.</info>');
+
+        $this->warnAboutLegacyGuardHook();
+    }
+
+    private function warnAboutLegacyGuardHook(): void
+    {
+        if (File::exists(base_path(self::LEGACY_GUARD_HOOK_PATH))) {
+            $this->line('  <comment>'.self::LEGACY_GUARD_HOOK_PATH.' is an old published copy nothing runs any more — delete it.</comment>');
+        }
+    }
+
+    /**
+     * Boost includes a package's guidelines only for packages listed under "packages"
+     * in boost.json, and `boost:update` never adds one without asking. List this
+     * package so its "Running Tests" guideline reaches the generated agent files.
+     */
+    private function registerGuidelinesInBoostConfig(): void
+    {
+        $boostPath = base_path('boost.json');
+
+        if (! File::exists($boostPath)) {
+            return;
+        }
+
+        $boostData = json_decode(File::get($boostPath), true);
+
+        if (! is_array($boostData)) {
+            return;
+        }
+
+        /** @var array<int, string> $packages */
+        $packages = array_values(array_filter(
+            is_array($boostData['packages'] ?? null) ? $boostData['packages'] : [],
+            is_string(...),
+        ));
+
+        if (in_array(self::PACKAGE_NAME, $packages, true)) {
+            return;
+        }
+
+        $boostData['packages'] = [...$packages, self::PACKAGE_NAME];
+
+        $encoded = json_encode($boostData, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        File::put($boostPath, is_string($encoded) ? $encoded."\n" : '');
+
+        $this->line('  <info>Listed '.self::PACKAGE_NAME.' under "packages" in boost.json.</info> Run <comment>php artisan boost:update</comment> to regenerate the agent guidelines.');
+    }
+
+    private function warnAboutLegacyTestGuideline(): void
+    {
+        if (! File::exists(base_path(self::LEGACY_TEST_GUIDELINE_PATH))) {
+            return;
+        }
+
+        $this->newLine();
+        $this->warn('⚠ '.self::LEGACY_TEST_GUIDELINE_PATH.' is a copy an older toolkit published.');
+        $this->line('  It overrides Boost\'s own test guideline, so agents read it beside the toolkit\'s current one —');
+        $this->line('  usually with older, contradicting advice. Delete it unless you have edited it on purpose.');
     }
 
     /**

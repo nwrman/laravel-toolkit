@@ -67,6 +67,12 @@ it('merges composer scripts into composer.json', function (): void {
             ->toHaveKey('test:unit')
             ->toHaveKey('test:frontend')
             ->toHaveKey('lint');
+
+        // Seconds-long gates before the minutes-long coverage run, and a coverage run
+        // that measures rather than replays (this repo's Pest has TIA).
+        expect($result['scripts']['test:ci'][0])->toBe('@test:lint')
+            ->and($result['scripts']['test:ci'][1])->toBe('@test:types')
+            ->and($result['scripts']['test:ci'][3])->toEndWith('--exactly=100.0 --no-tia');
     } finally {
         if ($originalContent !== null) {
             File::put($composerPath, $originalContent);
@@ -247,7 +253,7 @@ it('writes .claude/settings.json with two-space indentation', function (): void 
     }
 });
 
-it('publishes the guard hook and merges the PreToolUse entry into .claude/settings.json', function (): void {
+it('wires the guard hook from vendor/ into .claude/settings.json without publishing a copy', function (): void {
     $claudeDir = base_path('.claude');
 
     try {
@@ -263,11 +269,13 @@ it('publishes the guard hook and merges the PreToolUse entry into .claude/settin
             ->expectsConfirmation('Publish deployment scripts?', 'no')
             ->assertExitCode(0);
 
-        expect(File::exists($claudeDir.'/hooks/enforce-test-command.php'))->toBeTrue();
+        expect(File::exists($claudeDir.'/hooks/enforce-test-command.php'))->toBeFalse();
 
         $settings = json_decode(File::get($claudeDir.'/settings.json'), true);
         expect(data_get($settings, 'hooks.PreToolUse.0.matcher'))->toBe('Bash');
-        expect(data_get($settings, 'hooks.PreToolUse.0.hooks.0.command'))->toContain('enforce-test-command.php');
+        expect(data_get($settings, 'hooks.PreToolUse.0.hooks.0.command'))
+            ->toBe('php "$CLAUDE_PROJECT_DIR/vendor/nwrman/laravel-toolkit/bin/enforce-test-command.php"');
+        expect(File::exists(dirname(__DIR__, 2).'/bin/enforce-test-command.php'))->toBeTrue();
     } finally {
         File::deleteDirectory($claudeDir);
     }
@@ -279,7 +287,7 @@ it('does not duplicate the guard hook when it already exists in settings.json', 
     File::put($claudeDir.'/settings.json', json_encode([
         'hooks' => [
             'PreToolUse' => [
-                ['matcher' => 'Bash', 'hooks' => [['type' => 'command', 'command' => 'php "$CLAUDE_PROJECT_DIR/.claude/hooks/enforce-test-command.php"']]],
+                ['matcher' => 'Bash', 'hooks' => [['type' => 'command', 'command' => 'php "$CLAUDE_PROJECT_DIR/vendor/nwrman/laravel-toolkit/bin/enforce-test-command.php"']]],
             ],
         ],
     ], JSON_PRETTY_PRINT));
@@ -300,6 +308,42 @@ it('does not duplicate the guard hook when it already exists in settings.json', 
 
         $settings = json_decode(File::get($claudeDir.'/settings.json'), true);
         expect($settings['hooks']['PreToolUse'])->toHaveCount(1);
+    } finally {
+        File::deleteDirectory($claudeDir);
+    }
+});
+
+it('repoints a guard hook entry at the old published copy to vendor/, and flags the copy', function (): void {
+    $claudeDir = base_path('.claude');
+    File::ensureDirectoryExists($claudeDir.'/hooks');
+    File::put($claudeDir.'/hooks/enforce-test-command.php', '<?php // frozen copy');
+    File::put($claudeDir.'/settings.json', json_encode([
+        'hooks' => [
+            'PreToolUse' => [
+                ['matcher' => 'Bash', 'hooks' => [['type' => 'command', 'command' => 'php "$CLAUDE_PROJECT_DIR/.claude/hooks/enforce-test-command.php"']]],
+            ],
+        ],
+    ], JSON_PRETTY_PRINT));
+
+    try {
+        $this->artisan('toolkit:install')
+            ->expectsConfirmation('Move nwrman/laravel-toolkit to require-dev?', 'no')
+            ->expectsConfirmation('Merge recommended composer scripts?', 'no')
+            ->expectsConfirmation('Standardize composer test:* scripts to the toolkit convention (overwrites existing test:* / test)?', 'no')
+            ->expectsConfirmation('Publish AI skills & guidelines?', 'no')
+            ->expectsConfirmation('Install Claude Code test-command guard hook?', 'yes')
+            ->expectsConfirmation('Publish GitHub Actions workflow?', 'no')
+            ->expectsConfirmation('Publish static analysis configs (pint.json, phpstan.neon)?', 'no')
+            ->expectsConfirmation('Publish deploy notification command (and test)?', 'no')
+            ->expectsConfirmation('Publish deployment scripts?', 'no')
+            ->expectsOutputToContain('at vendor/')
+            ->expectsOutputToContain('nothing runs any more')
+            ->assertExitCode(0);
+
+        $settings = json_decode(File::get($claudeDir.'/settings.json'), true);
+        expect($settings['hooks']['PreToolUse'])->toHaveCount(1)
+            ->and(data_get($settings, 'hooks.PreToolUse.0.hooks.0.command'))
+            ->toBe('php "$CLAUDE_PROJECT_DIR/vendor/nwrman/laravel-toolkit/bin/enforce-test-command.php"');
     } finally {
         File::deleteDirectory($claudeDir);
     }
@@ -548,6 +592,43 @@ it('skips skill registration when boost.json is absent', function (): void {
             File::put($boostPath, $originalContent);
         }
 
+        File::deleteDirectory(base_path('.ai'));
+    }
+});
+
+it('lists the toolkit under boost.json packages so Boost renders its test guideline', function (): void {
+    $boostPath = base_path('boost.json');
+    File::put($boostPath, json_encode(['packages' => ['other/package'], 'skills' => []], JSON_PRETTY_PRINT));
+
+    try {
+        publishSkillsOnly($this)->assertExitCode(0);
+        publishSkillsOnly($this)->assertExitCode(0);
+
+        /** @var array{packages: array<int, string>} $result */
+        $result = json_decode(File::get($boostPath), true);
+
+        expect($result['packages'])->toBe(['other/package', 'nwrman/laravel-toolkit']);
+    } finally {
+        File::delete($boostPath);
+        File::deleteDirectory(base_path('.ai'));
+    }
+});
+
+it('no longer publishes the test guideline, and flags a copy an older install left behind', function (): void {
+    $boostPath = base_path('boost.json');
+    File::put($boostPath, json_encode(['skills' => []], JSON_PRETTY_PRINT));
+    File::ensureDirectoryExists(base_path('.ai/guidelines'));
+    File::put(base_path('.ai/guidelines/enforce-tests.blade.php'), '# Running Tests (old)');
+
+    try {
+        publishSkillsOnly($this)
+            ->expectsOutputToContain('is a copy an older toolkit published')
+            ->assertExitCode(0);
+
+        expect(File::get(base_path('.ai/guidelines/enforce-tests.blade.php')))->toBe('# Running Tests (old)')
+            ->and(File::exists(dirname(__DIR__, 2).'/resources/boost/guidelines/core.blade.php'))->toBeTrue();
+    } finally {
+        File::delete($boostPath);
         File::deleteDirectory(base_path('.ai'));
     }
 });

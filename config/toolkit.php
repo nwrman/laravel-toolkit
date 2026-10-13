@@ -13,6 +13,10 @@ return [
     | in parallel. Override individual gates by publishing this config and
     | changing only the keys you need. Set a gate to null to remove it.
     |
+    | The coverage gate runs through Test Impact Analysis when the project has
+    | it on: a replayed run reports the same coverage as a full one, so the
+    | gate stays honest and fast. `composer test:ci` is the run without TIA.
+    |
     */
 
     'gates' => [
