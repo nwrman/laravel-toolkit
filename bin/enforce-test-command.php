@@ -71,9 +71,43 @@ exit(0);
 function withoutQuotedText(string $command): string
 {
     $command = (string) preg_replace('/<<-?\s*([\'"]?)(\w+)\1[^\n]*\n.*?(?:\n\s*\2\b|\z)/s', '', $command);
-    $command = (string) preg_replace('/\'[^\']*\'/', "''", $command);
 
-    return (string) preg_replace('/"(?:\\\\.|[^"\\\\])*"/s', '""', $command);
+    // One left-to-right pass, the way the shell reads it. Two separate regex passes
+    // (single quotes, then double) let an apostrophe inside a double-quoted commit
+    // message pair with a later single quote, which unbalanced the double quotes and
+    // exposed a message line starting with "Pest" as if it were a command.
+    $kept = '';
+    $quote = null;
+    $length = strlen($command);
+
+    for ($i = 0; $i < $length; $i++) {
+        $char = $command[$i];
+
+        if ($quote === null) {
+            if ($char === "'" || $char === '"') {
+                $quote = $char;
+            }
+
+            $kept .= $char;
+
+            continue;
+        }
+
+        // Inside double quotes a backslash escapes the next character; inside single
+        // quotes nothing does.
+        if ($quote === '"' && $char === '\\') {
+            $i++;
+
+            continue;
+        }
+
+        if ($char === $quote) {
+            $kept .= $char;
+            $quote = null;
+        }
+    }
+
+    return $kept;
 }
 
 /**

@@ -48,6 +48,8 @@ it('blocks raw test runners', function (string $command): void {
     'chained after cd' => ['cd app && php artisan test'],
     'chained after install' => ['composer install; vendor/bin/pest'],
     'after a heredoc that ends' => ["cat > notes.md <<'EOF'\nsome notes\nEOF\nvendor/bin/pest"],
+    'after a closed double-quoted string' => ['echo "it\'s done" && vendor/bin/pest'],
+    'after a closed single-quoted string' => ["echo 'done' && php artisan test"],
 ]);
 
 it('allows toolkit wrappers, filtered debugging, and frontend runners', function (string $command): void {
@@ -76,6 +78,11 @@ it('allows toolkit wrappers, filtered debugging, and frontend runners', function
     'a runner named inside single quotes' => ["grep -E 'artisan test|vendor/bin/pest' scan.log"],
     'a runner named inside double quotes' => ['echo "then run && vendor/bin/pest"'],
     'a script written through a heredoc' => ["python3 - <<'EOF'\ncmd = 'pest --type-coverage && vendor/bin/pest --parallel'\nEOF"],
+    // An apostrophe inside a double-quoted message once paired with a later single quote,
+    // unbalanced the double quotes, and left a message line starting with "Pest" exposed.
+    'an apostrophe inside a double-quoted message' => ["git commit -m \"chore: Pest 5.3\n\nPest 5.1.4 -> 5.3.2\nLaravel's parallel runner\" 2>&1 | grep -v '^\\[\\|lint'"],
+    'a single-quoted message holding a double quote' => ["git commit -m 'say \"hi\"\npest is fine here'"],
+    'escaped quotes inside double quotes' => ['echo "a \\"quoted\\" pest word"'],
     'unrelated command' => ['php artisan migrate'],
 ]);
 
