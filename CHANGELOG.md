@@ -4,6 +4,42 @@ All notable changes to `laravel-toolkit` will be documented in this file.
 
 ## Unreleased
 
+### Agents check a change in the right order
+
+Measured in a consuming app over three days: 14 full `composer test:ci` runs, 100–230s each, most of them confirming
+a fix that one test or one gate would have confirmed in seconds. The agent advice pointed at hand-picked suites and
+listed `test:ci` beside `preflight` as equals.
+
+- **The "Running Tests" guideline ships through Boost** (`resources/boost/guidelines/core.blade.php`) instead of being
+  published. `composer update` + `php artisan boost:update` now reach every app. It replaces the old
+  "run the narrowest suite" advice with a checking order — touched test, `composer test`, one `composer preflight`,
+  `--retry` for what failed — and reserves `composer test:ci` for the "would CI pass?" check.
+- **The guard hook runs from `vendor/`** (`bin/enforce-test-command.php`). `toolkit:install` points
+  `.claude/settings.json` at it and repoints entries that still run the old copy in `.claude/hooks/`. Its block
+  message now gives the checking order instead of recommending per-suite runs, it allows the bare `composer test`
+  (Test Impact Analysis made it the fast default), and it ignores quoted strings and heredoc bodies, so a commit
+  message or a script written to disk that only mentions a runner is no longer blocked.
+- **`toolkit:report --filter=<pattern>`** (`composer test -- --filter=X`): one test or file through the wrapper, with
+  the failure report and the frontend build check. `php artisan test --filter` on a browser spec skips that check and
+  can test a stale bundle.
+- **`test:ci` fails fastest first and measures everything**: lint and types before the coverage run, and `--no-tia`
+  on the coverage run wherever Pest has TIA — CI runs every test, so the check that predicts it must too. Merged by
+  `toolkit:install` into apps that have no `test:ci` yet; existing ones keep theirs.
+- **Fixed: `toolkit:preflight` exhausting memory** once a gate ran for minutes (#8). Under `--env=testing`,
+  `nunomaduro/essentials` fakes `Sleep` in the parent process, and the poll loop used `Sleep::usleep()` — so it
+  busy-spun, recording every interval, at roughly 200 MB/s. It now uses PHP's own `usleep()`.
+
+### Upgrade path
+
+```bash
+composer update nwrman/laravel-toolkit
+php artisan toolkit:install            # answer yes to "AI skills & guidelines" and "guard hook"
+rm .ai/guidelines/enforce-tests.blade.php .claude/hooks/enforce-test-command.php   # the old copies
+php artisan boost:update
+```
+
+Reorder your own `test:ci` by hand if you want the fast-fail order; the installer never overwrites it.
+
 ### BREAKING
 
 - The package is now **dev-only**. Install with `composer require --dev nwrman/laravel-toolkit`. The service provider is fully inert outside `runningInConsole()` context — `register()` and `boot()` short-circuit on HTTP requests and queue workers, so the package adds zero overhead to application runtime.
