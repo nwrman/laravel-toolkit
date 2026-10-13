@@ -87,6 +87,57 @@ it('keeps the full backend run filtered when TIA is disabled', function (): void
         && ($process->environment['XDEBUG_MODE'] ?? null) === 'off');
 });
 
+it('runs a filtered run on the backend suites only, with the build check, off the TIA path', function (): void {
+    // A filter is a partial selection, so TIA could not engage even when enabled.
+    config(['toolkit.tia.enabled' => true]);
+
+    Process::fake([
+        'find *' => Process::result(output: '', exitCode: 0),
+        'vp build' => Process::result(exitCode: 0),
+        'pest *' => Process::result(exitCode: 0),
+        'bun *' => Process::result(exitCode: 0),
+    ]);
+
+    $this->artisan('toolkit:report', ['--filter' => 'GalleryTest', '--no-interaction' => true, '--no-notify' => true])
+        ->expectsOutput('Running tests for suites: unit, feature, browser')
+        ->assertExitCode(0);
+
+    Process::assertRan(fn ($process): bool => str_starts_with((string) $process->command, 'pest ')
+        && str_contains((string) $process->command, '--testsuite=Unit,Feature,Browser')
+        && str_contains((string) $process->command, "--filter='GalleryTest'")
+        && ($process->environment['XDEBUG_MODE'] ?? null) === 'off');
+    Process::assertRan('vp build');
+    Process::assertNotRan(fn ($process): bool => str_starts_with((string) $process->command, 'bun '));
+});
+
+it('keeps an explicit suite when a filter is given', function (): void {
+    Process::fake(['pest *' => Process::result(exitCode: 0)]);
+
+    $this->artisan('toolkit:report', ['--suite' => 'feature', '--filter' => 'saves a draft', '--no-notify' => true])
+        ->assertExitCode(0);
+
+    Process::assertRan(fn ($process): bool => str_contains((string) $process->command, '--testsuite=Feature')
+        && str_contains((string) $process->command, "--filter='saves a draft'"));
+});
+
+it('quotes the filter for the shell', function (): void {
+    Process::fake(['pest *' => Process::result(exitCode: 0)]);
+
+    $this->artisan('toolkit:report', ['--suite' => 'unit', '--filter' => "it's; rm -rf /", '--no-notify' => true])
+        ->assertExitCode(0);
+
+    Process::assertRan(fn ($process): bool => str_contains((string) $process->command, "--filter='it'\\''s; rm -rf /'"));
+});
+
+it('ignores a blank filter', function (): void {
+    Process::fake(['pest *' => Process::result(exitCode: 0)]);
+
+    $this->artisan('toolkit:report', ['--suite' => 'unit', '--filter' => '  ', '--no-notify' => true])
+        ->assertExitCode(0);
+
+    Process::assertRan(fn ($process): bool => ! str_contains((string) $process->command, '--filter'));
+});
+
 it('generates report when a suite fails', function (): void {
     Process::fake([
         'pest *' => Process::result(output: 'Failures', exitCode: 1),

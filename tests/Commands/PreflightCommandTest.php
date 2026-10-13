@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Process;
+use Illuminate\Support\Sleep;
 use Nwrman\LaravelToolkit\Commands\PreflightCommand;
 
 beforeEach(function (): void {
@@ -283,4 +284,19 @@ it('falls back to all gates when state file contains invalid JSON', function ():
     $this->artisan('toolkit:preflight', ['--retry' => true, '--no-notify' => true])
         ->expectsOutputToContain('Could not parse preflight state')
         ->assertExitCode(0);
+});
+
+it('really waits between polls when the app has Sleep faked', function (): void {
+    // Under --env=testing, nunomaduro/essentials calls Sleep::fake() in the PARENT process.
+    // A faked Sleep::usleep() returns at once and records the interval, so a poll loop built
+    // on it busy-spins and grows that record without bound — ~200 MB/s, until preflight dies
+    // of memory on any gate that runs for minutes (nwrman/laravel-toolkit#8).
+    Sleep::fake();
+
+    config(['toolkit.gates' => ['slow' => ['label' => 'Slow', 'command' => 'sleep 0.5']]]);
+
+    $this->artisan('toolkit:preflight', ['--gate' => ['slow'], '--no-notify' => true])
+        ->assertExitCode(0);
+
+    Sleep::assertNeverSlept();
 });

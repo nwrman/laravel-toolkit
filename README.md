@@ -125,6 +125,7 @@ php artisan toolkit:report
 | Option | Description |
 |--------|-------------|
 | `--suite=<list>` | Comma-separated suites to run: `unit,feature,browser,frontend` |
+| `--filter=<pattern>` | Only the backend tests matching this Pest filter. Selects the backend suites unless `--suite` says otherwise, and still runs the frontend build check first, so one browser spec never tests a stale bundle: `composer test -- --filter=GalleryTest` |
 | `--force-build` | Force a frontend rebuild before browser tests |
 | `--no-notify` | Suppress macOS desktop notification |
 
@@ -418,7 +419,17 @@ The `toolkit-ai` tag publishes AI coding assistant skills and guidelines to `.ai
 | `land-feature-branch` | Merge an approved PR into main |
 | `provision-laravel-cloud` | Stand up a Laravel Cloud application for the first time |
 
-Guidelines cover: action pattern, domain folders, test enforcement, general conventions, Pest testing, React best practices, and Vitest.
+Guidelines cover: action pattern, domain folders, general conventions, Pest testing, React best practices, and Vitest.
+
+The **"Running Tests" guideline is not published** — it ships from this package at
+`resources/boost/guidelines/core.blade.php`, and Boost reads it from `vendor/`, so `composer update` +
+`php artisan boost:update` keep every app on the current advice. `toolkit:install` lists the package under
+`"packages"` in `boost.json`, which is what makes Boost include it. It sets the order an agent checks a change in —
+the touched test, then `composer test`, then one `composer preflight`, then `--retry` for whatever failed — and gives
+`composer test:ci` its single job: the "would CI pass?" check.
+
+Apps installed before this carry a published copy at `.ai/guidelines/enforce-tests.blade.php`. That copy overrides
+Boost's own test guideline with the old advice; `toolkit:install` flags it, and it should be deleted.
 
 Publishing a skill only puts it on disk. Boost's `skills` array in `boost.json` is what surfaces
 it in the guidelines an agent always has in context, so `toolkit:install` registers every skill
@@ -459,13 +470,13 @@ The `toolkit:install` command can merge these scripts into your `composer.json`:
 | `composer dev` | Concurrent queue worker + Pail + Vite dev server |
 | `composer lint` | Rector + Pint + frontend linting |
 | `composer lint:dirty` | Lint only files changed since last commit |
-| `composer test` | Run all test suites (unit, feature, browser, frontend) |
+| `composer test` | Run all test suites (unit, feature, browser, frontend); with TIA, only the affected backend tests |
 | `composer test:unit` | Pest unit tests (parallel) |
 | `composer test:feature` | Pest feature tests (parallel) |
 | `composer test:browser` | Pest browser tests (parallel) |
 | `composer test:lint` | Pint + Rector + frontend lint (verification mode) |
 | `composer test:types` | PHPStan + frontend type checking |
-| `composer test:ci` | Full CI pipeline (coverage + lint + types) |
+| `composer test:ci` | What CI runs, fastest gates first (lint, types, then coverage), TIA off — the "would CI pass?" check |
 | `composer test:report` | `toolkit:report` with timeout disabled |
 | `composer test:retry` | `toolkit:retry` |
 | `composer preflight` | `toolkit:preflight` with timeout disabled |

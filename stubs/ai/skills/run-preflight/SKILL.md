@@ -7,7 +7,8 @@ description: Run the preflight command to verify all CI gates pass before pushin
 
 ## Overview
 
-`composer preflight` runs all CI gates in parallel (~40s vs ~140s sequential). This is the primary pre-push verification command. Run it before pushing code. On failure, fix the root cause and use `--retry` to re-run only the failed gates.
+`composer preflight` runs every CI gate in parallel and prints a summary table. It is the ship gate: run it **once**,
+when the work is done — not after every fix. On failure, fix the root cause and re-run only what failed.
 
 ## Workflow
 
@@ -28,48 +29,44 @@ This runs 4 gates in parallel:
 
 The command also checks if frontend assets need rebuilding before running tests. Use `--force-build` to force a rebuild.
 
-**If all gates pass** → safe to push.
+**If all gates pass** → safe to push. Keep the summary table; it is the evidence.
 
 **If any gate fails** → proceed to Step 2.
 
-### Step 2 — Fix and Retry
+### Step 2 — Fix, then re-run only what failed
 
-1. Read the failure output — it shows exactly which gate failed and the last 40 lines of output.
+1. Read the failure output — it names the gate that failed and prints the end of its output.
 2. Fix the root cause in the source files.
-3. Re-run only the failed gates:
+3. Re-run the failed gates only:
 
 ```bash
-composer preflight -- --retry
+php artisan toolkit:preflight --retry
 ```
 
-This reads the saved state file and only re-runs gates that failed last time. Repeat until all gates pass.
+`--retry` reads the saved state and re-runs only the gates that failed last time. Repeat until they pass.
 
-### Targeting Specific Gates
+To check one gate while you are still fixing it, name it: `php artisan toolkit:preflight --gate=lint` (or `types`,
+`pest-coverage`, `frontend-coverage`). A lint or type fix is confirmed by its own gate; it never needs the test suite.
 
-When iterating on a fix, run only the relevant gate to get faster feedback:
-
-```bash
-composer preflight -- --gate lint              # Just lint
-composer preflight -- --gate pest-coverage     # Just PHP tests + coverage
-composer preflight -- --gate lint --gate types # Multiple specific gates
-```
-
-Then run the full `composer preflight` once the targeted gate passes.
+Run the full `composer preflight` again only if the fix touched code another gate checks — a refactor that moved
+logic, not a formatting or type annotation fix.
 
 ## Quick Reference
 
 | Command | Purpose |
 |---------|---------|
-| `composer preflight` | Run all 4 gates in parallel |
-| `composer preflight -- --retry` | Re-run only previously failed gates |
-| `composer preflight -- --gate <name>` | Run specific gate(s) |
-| `composer preflight -- --force-build` | Force frontend rebuild before running |
-| `composer preflight -- --no-notify` | Suppress macOS notification |
-| `composer test:ci` | Sequential equivalent (mirrors CI exactly) |
+| `composer preflight` | All gates in parallel — once, at the end |
+| `php artisan toolkit:preflight --retry` | Only the gates that failed last run |
+| `php artisan toolkit:preflight --gate=<name>` | One gate (repeat the flag for more) |
+| `composer preflight -- --force-build` | Force a frontend rebuild first |
+| `composer preflight -- --no-notify` | Suppress the macOS notification |
+| `composer test:ci` | What CI runs, serially, every test from scratch — the "would CI pass?" check |
 
 ## Common Mistakes
 
-- **Skipping preflight before pushing** — CI will catch the same issues but slower. Always run `composer preflight` first.
-- **Running `composer test:ci` locally instead of preflight** — `test:ci` runs sequentially (~140s). Preflight runs the same checks in parallel (~40s).
-- **Only re-running the failed gate** — after fixing, use `composer preflight -- --retry` rather than `--gate`. Retry re-runs only the failures from the last run, which is what you want. Follow up with a full `composer preflight` if you changed code that could affect multiple gates.
+- **Re-running the whole gate to confirm a narrow fix** — the most expensive habit there is: minutes per run, several
+  runs per task. Re-run the failed gate, or the one failing test with `php artisan test --filter`.
+- **Using `composer test:ci` as the fix loop** — it runs serially and measures every test, so it is the slowest way to
+  learn about a lint error. It is for one "would CI pass?" check, not for iterating.
+- **Skipping preflight before pushing** — CI will catch the same issues, but later.
 - **Not reading the failure output** — each failed gate prints actionable details. Read them before editing files.

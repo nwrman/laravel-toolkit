@@ -27,6 +27,7 @@ final class TestReportCommand extends Command
     protected $signature = 'toolkit:report
         {--force-build : Force frontend rebuild}
         {--suite= : Run specific suites (comma-separated: unit,feature,browser,frontend)}
+        {--filter= : Only run the backend tests matching this Pest filter}
         {--no-notify : Skip macOS notification}';
 
     #[Override]
@@ -107,6 +108,13 @@ final class TestReportCommand extends Command
         return $path;
     }
 
+    private function filter(): ?string
+    {
+        $filter = $this->option('filter');
+
+        return is_string($filter) && mb_trim($filter) !== '' ? mb_trim($filter) : null;
+    }
+
     private function notifyTitle(): string
     {
         /** @var string $appName */
@@ -128,6 +136,12 @@ final class TestReportCommand extends Command
             $suiteStr = mb_strtolower(mb_trim($suite));
 
             return array_filter(array_map(trim(...), explode(',', $suiteStr)));
+        }
+
+        // A filter names backend tests; running Vitest in full beside it would only add noise.
+        // Browser stays selected, so a filtered browser spec still gets the frontend build check.
+        if ($this->filter() !== null) {
+            return array_values(array_intersect(array_keys($suites), self::BACKEND_SUITES));
         }
 
         if (! $this->input->isInteractive()) {
@@ -158,12 +172,20 @@ final class TestReportCommand extends Command
         // redundant anyway, so drop both and record with a coverage driver — JUnit
         // logging still works, so the failure report is unaffected. Narrower runs keep
         // the driver-off path, which is faster than recording a graph they can't use.
+        // A --filter is a partial selection too, so it takes the driver-off path.
+        $filter = $this->filter();
+
         $tia = (bool) config('toolkit.tia.enabled', false)
+            && $filter === null
             && array_diff(self::BACKEND_SUITES, $suites) === [];
 
         $cmd = $tia
             ? sprintf('pest --parallel --log-junit %s', $xmlFile)
             : sprintf('pest --testsuite=%s --ci --parallel --log-junit %s', $suiteArg, $xmlFile);
+
+        if ($filter !== null) {
+            $cmd .= ' --filter='.escapeshellarg($filter);
+        }
 
         $this->line(sprintf('<comment>Running Backend Tests (%s)...</comment>', $suiteArg));
 
