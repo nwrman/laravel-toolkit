@@ -2,6 +2,13 @@
 
 All notable changes to `laravel-toolkit` will be documented in this file.
 
+## v0.2.1 — 2026-10-13
+
+- **Fixed: the guard hook blocking a commit whose message only mentioned Pest.** Quoted text was stripped in two
+  regex passes, single quotes first, so an apostrophe inside a double-quoted message (`"Laravel's …"`) paired with a
+  later single quote, unbalanced the double quotes, and exposed a message line starting with "Pest" as a command. It
+  is now one left-to-right scan, the way the shell reads quotes. Found by the hook blocking its own release commit.
+
 ## v0.2.0 — 2026-10-13
 
 ### Agents check a change in the right order
