@@ -68,11 +68,13 @@ it('merges composer scripts into composer.json', function (): void {
             ->toHaveKey('test:frontend')
             ->toHaveKey('lint');
 
-        // Seconds-long gates before the minutes-long coverage run, and a coverage run
-        // that measures rather than replays (this repo's Pest has TIA).
+        // Seconds-long gates before the minutes-long coverage run. --no-tia only where the
+        // installed Pest has TIA: Pest without it rejects the flag outright.
+        $coverageRun = class_exists('Pest\\Plugins\\Tia') ? '--exactly=100.0 --no-tia' : '--exactly=100.0';
+
         expect($result['scripts']['test:ci'][0])->toBe('@test:lint')
             ->and($result['scripts']['test:ci'][1])->toBe('@test:types')
-            ->and($result['scripts']['test:ci'][3])->toEndWith('--exactly=100.0 --no-tia');
+            ->and($result['scripts']['test:ci'][3])->toEndWith($coverageRun);
     } finally {
         if ($originalContent !== null) {
             File::put($composerPath, $originalContent);
