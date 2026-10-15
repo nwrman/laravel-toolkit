@@ -428,6 +428,12 @@ The **"Running Tests" guideline is not published** — it ships from this packag
 the touched test, then `composer test`, then one `composer preflight`, then `--retry` for whatever failed — and gives
 `composer test:ci` its single job: the "would CI pass?" check.
 
+The **"What a Good Test Is" guideline and the `test-quality` skill** ship the same way
+(`resources/boost/guidelines/testing.blade.php`, `resources/boost/skills/test-quality/`). The guideline is the
+always-on half: tests pin behavior, stage only reachable states, fake only at the edges, assert exact known values.
+The skill is the tear-apart checklist an agent loads to write tests and to review someone else's — weak assertions,
+conditional test logic, tautologies, change detectors, setup that mirrors the implementation, missing edges.
+
 Apps installed before this carry a published copy at `.ai/guidelines/enforce-tests.blade.php`. That copy overrides
 Boost's own test guideline with the old advice; `toolkit:install` flags it, and it should be deleted.
 

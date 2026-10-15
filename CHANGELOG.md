@@ -2,6 +2,24 @@
 
 All notable changes to `laravel-toolkit` will be documented in this file.
 
+## v0.3.0 — 2026-10-15
+
+### Agents are told what a good test is, not only how to run one
+
+The shipped advice covered running tests and nothing about what to assert. Agent-written tests passed, raised
+coverage and proved little: `toBeTruthy()` where a value was known, branches in test bodies, expected values computed
+with the production logic, mocks of the app's own Actions.
+
+- **New Boost guideline "What a Good Test Is"** (`resources/boost/guidelines/testing.blade.php`), always in context:
+  a test fails when the behavior breaks and survives a refactor; assert through the app's front door; stage only
+  states the app can reach; fake only at the system's edges; exact known values; one deterministic path; no
+  tautologies or change detectors; cover the edges; repeated setup moves into shared tooling.
+- **New Boost skill `test-quality`** (`resources/boost/skills/test-quality/`): the tear-apart checklist for writing
+  and reviewing tests, Pest and Vitest, with a findings format for a reviewing agent. It adds to Laravel's
+  `testing-best-practices` skill rather than repeating it.
+
+Reaches an app on `composer update` + `php artisan boost:update`.
+
 ## v0.2.1 — 2026-10-13
 
 - **Fixed: the guard hook blocking a commit whose message only mentioned Pest.** Quoted text was stripped in two
