@@ -55,6 +55,7 @@ php artisan vendor:publish --tag=toolkit-commands --force
 | `toolkit:preflight` | Run all CI quality gates in parallel |
 | `toolkit:report` | Run test suites and generate failure reports |
 | `toolkit:retry` | Re-run only previously failed tests |
+| `toolkit:tia` | Hand complete TIA baselines from landed branches to new ones |
 | `toolkit:install` | Interactive project setup wizard |
 | `starter:install-filament` | Install the canonical Filament admin panel into a consumer app |
 
@@ -63,6 +64,10 @@ A `deploy:notify-telegram` command is also available for deploy pipelines, but i
 ### `toolkit:preflight`
 
 Runs all configured quality gates in parallel with a live spinner UI, summary table, and macOS desktop notifications.
+
+With TIA on, it refuses to run a coverage gate that passes a Pest selection flag (`--exclude-testsuite`, `--group`,
+`--filter`, …): Pest switches TIA off for such a run, so every preflight would re-run the whole suite and leave no
+baseline behind.
 
 ```bash
 php artisan toolkit:preflight
@@ -160,6 +165,28 @@ composer test:retry
 # Iterate until clean, then run full preflight
 composer preflight
 ```
+
+### `toolkit:tia`
+
+Hands a complete Test Impact Analysis baseline from work that has landed to work that is starting,
+so no checkout records one up front. Each git worktree gets its own Pest cache (Pest keys it by the worktree's path), so
+without this every new worktree starts with no baseline and its first runs re-run everything.
+
+```bash
+php artisan toolkit:tia publish   # after a branch merges: file its baseline under the branch it merged into
+php artisan toolkit:tia inherit   # in a new checkout: copy its base branch's baseline under this branch's name
+php artisan toolkit:tia check     # exit 0 when this branch has a usable baseline, 1 with the reason otherwise
+```
+
+- **publish** files the current branch's baseline for its base only when it is complete, has a commit, has a coverage
+  cache, and that commit is merged into the base (locally or on `origin`). A newer baseline already on file is kept.
+- **inherit** does nothing when the branch already has a usable baseline, and copies nothing whose commit is outside
+  the branch's history (Pest would ignore it).
+- The base is `--base`, else `git config branch.<name>.tiaBase`, else the remote's default branch.
+- Published baselines live in the repository's common git directory (`.git/pest-tia/<base>/`), shared by every
+  worktree.
+
+Every action is a no-op when `toolkit.tia.enabled` is off.
 
 ### Published deploy notification command
 

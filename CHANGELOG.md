@@ -2,6 +2,24 @@
 
 All notable changes to `laravel-toolkit` will be documented in this file.
 
+## v0.4.0 — 2026-10-19
+
+### New worktrees inherit a TIA baseline instead of re-recording one
+
+Pest keys each git worktree's TIA cache by its own path, so a ticket's worktree started with no baseline: its first
+`composer test` and its final `composer preflight` re-ran everything. Copying the main checkout's cache did not fix it —
+that baseline went stale, or recorded no commit at all, whenever main's checkout sat on another branch.
+
+- **New `toolkit:tia` command** (`check`, `inherit`, `publish`). A landed branch publishes its final, complete
+  baseline for the branch it merged into; a new checkout cut from that branch inherits it under its own name. Works
+  for any base branch, not only `main`. The logic tracks Pest's cache format here, so consuming apps stop carrying
+  their own copy of it in scripts.
+- **`toolkit:preflight` refuses a coverage gate that switches TIA off.** A selection flag such as
+  `--exclude-testsuite=Browser` made every preflight re-run the whole suite and record nothing to hand on. The "Running
+  Tests" guideline says why the gate stays unfiltered.
+- **Fixed: the guard hook blocking `pest --baseline`**, which prints the cache directory and runs no tests.
+- **Fixed: two PHPStan errors.** `toolkit:retry` gains `--no-notify`, like the other commands that notify.
+
 ## v0.3.0 — 2026-10-15
 
 ### Agents are told what a good test is, not only how to run one

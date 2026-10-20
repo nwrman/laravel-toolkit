@@ -300,3 +300,45 @@ it('really waits between polls when the app has Sleep faked', function (): void 
 
     Sleep::assertNeverSlept();
 });
+
+it('refuses a coverage gate that switches TIA off', function (string $command, string $flag): void {
+    config([
+        'toolkit.tia.enabled' => true,
+        'toolkit.gates' => ['pest-coverage' => ['label' => 'Pest Coverage', 'command' => $command]],
+    ]);
+    Process::fake();
+
+    $this->artisan('toolkit:preflight', ['--no-notify' => true])
+        ->expectsOutputToContain(sprintf('The Pest Coverage gate passes %s to a Pest coverage run.', $flag))
+        ->assertExitCode(1);
+
+    Process::assertNothingRan();
+})->with([
+    'excluded testsuite' => ['vendor/bin/pest --parallel --coverage --min=85 --exclude-testsuite=Browser', '--exclude-testsuite'],
+    'after a chained command' => ['vendor/bin/pest --type-coverage --min=100 && vendor/bin/pest --parallel --coverage --group=fast', '--group'],
+    'flag with a separate value' => ['pest --coverage --testsuite Unit', '--testsuite'],
+]);
+
+it('runs a filtered coverage gate when TIA is off', function (): void {
+    config([
+        'toolkit.tia.enabled' => false,
+        'toolkit.gates' => ['pest-coverage' => ['label' => 'Pest Coverage', 'command' => 'vendor/bin/pest --coverage --exclude-testsuite=Browser']],
+    ]);
+    Process::fake();
+
+    $this->artisan('toolkit:preflight', ['--no-notify' => true])
+        ->expectsOutputToContain('✓ All gates passed!')
+        ->assertExitCode(0);
+});
+
+it('runs a selection flag outside the coverage run when TIA is on', function (): void {
+    config([
+        'toolkit.tia.enabled' => true,
+        'toolkit.gates' => ['pest-coverage' => ['label' => 'Pest Coverage', 'command' => 'vendor/bin/pest --type-coverage --exclude-testsuite=Browser && vendor/bin/pest --parallel --coverage']],
+    ]);
+    Process::fake();
+
+    $this->artisan('toolkit:preflight', ['--no-notify' => true])
+        ->expectsOutputToContain('✓ All gates passed!')
+        ->assertExitCode(0);
+});
