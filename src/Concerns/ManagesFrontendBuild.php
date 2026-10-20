@@ -74,7 +74,7 @@ trait ManagesFrontendBuild
 
     private function ensureFrontendBuild(): bool
     {
-        if ($this->hasOption('force-build') && $this->option('force-build')) {
+        if ($this->option('force-build')) {
             $this->line('<comment>--force-build:</comment> rebuilding frontend assets...');
             // @codeCoverageIgnoreStart
         } elseif ($this->needsBuild()) {

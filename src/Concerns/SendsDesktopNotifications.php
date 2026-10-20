@@ -14,9 +14,7 @@ trait SendsDesktopNotifications
 {
     private function notify(string $title, string $message, string $sound): void
     {
-        // hasOption() asks whether the option is *defined* on this command — not every command
-        // using this trait declares --no-notify, and option() would throw for those.
-        if ($this->hasOption('no-notify') && $this->option('no-notify')) {
+        if ($this->option('no-notify')) {
             return;
         }
 

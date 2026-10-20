@@ -15,7 +15,8 @@ final class TestRetryCommand extends Command
     use SendsDesktopNotifications;
 
     #[Override]
-    protected $signature = 'toolkit:retry';
+    protected $signature = 'toolkit:retry
+        {--no-notify : Skip macOS notification}';
 
     #[Override]
     protected $description = 'Re-run only the previously failed tests';

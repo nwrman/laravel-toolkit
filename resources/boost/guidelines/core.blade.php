@@ -68,6 +68,9 @@ suite; an unchanged tree runs nothing; a comment-only edit or a formatter pass r
 - **Coverage works through TIA.** A replayed run stores what each test covered, so `composer preflight`'s coverage
   gate reports the same numbers as a full run — just faster. `composer test:ci` runs with `--no-tia`, because it
   answers "would CI pass?" and CI runs every test.
+- **Keep the coverage gate unfiltered.** `--exclude-testsuite`, `--group`, `--filter` and the other selection flags make
+  Pest switch TIA off, so every preflight would re-run the whole suite. `toolkit:preflight` refuses such a gate; with
+  TIA on, Browser specs only run when a change can reach them, so there is nothing to gain by excluding them.
 - The graph lives outside the repo in `~/.pest/tia/` and rebuilds itself when `composer.lock`, `phpunit.xml`, the vite
   config or the node lockfile change. Nothing to gitignore.
 - If a coverage number looks wrong — a percentage that will not move, or a file you never touched reported as

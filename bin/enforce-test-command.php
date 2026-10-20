@@ -127,6 +127,11 @@ function isBlockedTestCommand(string $segment): bool
         return false;
     }
 
+    // `pest --baseline` prints the TIA cache directory and exits; it runs no tests.
+    if (preg_match('/(?:^|\s)--baseline(?:\s|$)/', $segment) === 1) {
+        return false;
+    }
+
     // Strip leading env-var assignments (e.g. `XDEBUG_MODE=coverage pest`).
     $segment = preg_replace('/^(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)+/', '', $segment) ?? $segment;
 

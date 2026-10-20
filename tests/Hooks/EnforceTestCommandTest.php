@@ -71,6 +71,7 @@ it('allows toolkit wrappers, filtered debugging, and frontend runners', function
     'composer run test:unit' => ['composer run test:unit'],
     'artisan test --filter' => ["php artisan test --filter='UserTest'"],
     'pest --filter' => ["pest --filter='it does the thing'"],
+    'pest --baseline' => ['PAO_DISABLE=1 vendor/bin/pest --baseline | tail -1'],
     'vitest' => ['bunx vitest run resources/js/x.test.tsx'],
     'bun run test' => ['bun run test:ui'],
     'synthetic e2e' => ['composer test:synthetic'],

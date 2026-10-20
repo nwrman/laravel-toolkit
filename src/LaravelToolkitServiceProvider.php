@@ -10,6 +10,7 @@ use Nwrman\LaravelToolkit\Commands\InstallFilamentCommand;
 use Nwrman\LaravelToolkit\Commands\PreflightCommand;
 use Nwrman\LaravelToolkit\Commands\TestReportCommand;
 use Nwrman\LaravelToolkit\Commands\TestRetryCommand;
+use Nwrman\LaravelToolkit\Commands\TiaCommand;
 
 final class LaravelToolkitServiceProvider extends ServiceProvider
 {
@@ -62,6 +63,7 @@ final class LaravelToolkitServiceProvider extends ServiceProvider
             PreflightCommand::class,
             TestReportCommand::class,
             TestRetryCommand::class,
+            TiaCommand::class,
             InstallCommand::class,
             InstallFilamentCommand::class,
         ]);

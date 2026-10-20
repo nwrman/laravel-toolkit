@@ -22,6 +22,17 @@ final class PreflightCommand extends Command
 
     private const array SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
+    /**
+     * Pest's partial-selection flags (`Pest\Plugins\Tia::PARTIAL_SELECTION_FLAGS`).
+     * Any one of them makes Pest switch TIA off for the run.
+     */
+    private const array PARTIAL_SELECTION_FLAGS = [
+        '--filter', '--exclude-filter', '--group', '--exclude-group',
+        '--covers', '--uses', '--testsuite', '--exclude-testsuite', '--test-suffix',
+        '--dirty', '--todo', '--todos', '--flaky', '--notes',
+        '--assignee', '--issue', '--ticket', '--pr', '--pull-request',
+    ];
+
     #[Override]
     protected $signature = 'toolkit:preflight
         {--retry : Only re-run previously failed gates}
@@ -44,6 +55,10 @@ final class PreflightCommand extends Command
 
         if ($gatesToRun === []) {
             return 0;
+        }
+
+        if ($this->rejectsTiaDefeatingGates($gatesToRun)) {
+            return 1;
         }
 
         $gates = $this->gates();
@@ -101,6 +116,62 @@ final class PreflightCommand extends Command
         $gates = config('toolkit.gates', []);
 
         return $gates;
+    }
+
+    /**
+     * A coverage gate that selects part of the suite runs without TIA: every preflight
+     * re-runs everything, and it leaves no baseline for the next branch to inherit.
+     *
+     * @param  array<int, string>  $gatesToRun
+     */
+    private function rejectsTiaDefeatingGates(array $gatesToRun): bool
+    {
+        if (! (bool) config('toolkit.tia.enabled', false)) {
+            return false;
+        }
+
+        $gates = $this->gates();
+        $rejected = false;
+
+        foreach ($gatesToRun as $gate) {
+            $flag = $this->partialSelectionFlag($gates[$gate]['command']);
+
+            if ($flag === null) {
+                continue;
+            }
+
+            $rejected = true;
+            $this->error(sprintf('The %s gate passes %s to a Pest coverage run.', $gates[$gate]['label'], $flag));
+            $this->line('Pest treats that as a partial run and switches TIA off: every preflight re-runs the whole suite and');
+            $this->line('leaves no baseline for the next branch. Remove it from config/toolkit.php — with TIA on, a run already');
+            $this->line('limits itself to the tests a change can reach, Browser specs included.');
+        }
+
+        return $rejected;
+    }
+
+    private function partialSelectionFlag(string $command): ?string
+    {
+        foreach (preg_split('/&&|\|\||;/', $command) ?: [] as $segment) {
+            $tokens = preg_split('/\s+/', mb_trim($segment), -1, PREG_SPLIT_NO_EMPTY) ?: [];
+
+            $runsPest = array_any($tokens, fn (string $token): bool => str_ends_with($token, 'pest'));
+            $collectsCoverage = array_any($tokens, fn (string $token): bool => $token === '--coverage' || str_starts_with($token, '--coverage='));
+
+            if (! $runsPest || ! $collectsCoverage) {
+                continue;
+            }
+
+            foreach ($tokens as $token) {
+                foreach (self::PARTIAL_SELECTION_FLAGS as $flag) {
+                    if ($token === $flag || str_starts_with($token, $flag.'=')) {
+                        return $flag;
+                    }
+                }
+            }
+        }
+
+        return null;
     }
 
     private function stateFile(): string
