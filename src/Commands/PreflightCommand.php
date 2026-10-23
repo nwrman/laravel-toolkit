@@ -83,12 +83,16 @@ final class PreflightCommand extends Command
             $this->newLine();
         }
 
-        $checkpoint = $tia?->coverageCheckpoint(base_path());
-        $startedAt = time();
+        $coverageRun = $tia?->startCoverageRun(base_path());
         $results = $this->runGatesInParallel($gatesToRun, $isAgent);
 
-        if ($tia !== null && $checkpoint !== null) {
-            $tia->stampCoverage(base_path(), $checkpoint, $startedAt);
+        if ($tia !== null && $coverageRun !== null) {
+            $settled = $tia->finishCoverageRun(base_path(), $coverageRun, $this->coverageGatesPassed($results));
+
+            if ($settled !== null) {
+                $this->line($settled);
+                $this->newLine();
+            }
         }
 
         $hasFailures = $this->hasFailures($results);
@@ -180,6 +184,21 @@ final class PreflightCommand extends Command
         $gates = $this->gates();
 
         return array_any($gatesToRun, fn (string $gate): bool => $this->pestCoverageRuns($gates[$gate]['command']) !== []);
+    }
+
+    /**
+     * Whether every gate that ran Pest coverage passed.
+     *
+     * @param  array<string, array{status: string, duration: float, output: string}>  $results
+     */
+    private function coverageGatesPassed(array $results): bool
+    {
+        $gates = $this->gates();
+
+        return array_all(
+            $results,
+            fn (array $result, string $gate): bool => $result['status'] === 'pass' || $this->pestCoverageRuns($gates[$gate]['command']) === [],
+        );
     }
 
     /**

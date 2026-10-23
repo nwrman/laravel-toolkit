@@ -70,8 +70,9 @@ suite; an unchanged tree runs nothing; a comment-only edit or a formatter pass r
   answers "would CI pass?" and CI runs every test.
 - **Preflight keeps the coverage cache honest.** Before the coverage gate it moves Pest's commit back to the one the
   coverage cache matches (a plain `composer test` moves it on without updating coverage), moves a cache recorded in
-  another checkout to this one, and deletes a cache it cannot place so the run records coverage afresh. It prints a
-  `TIA:` line when it does any of these. Running `composer test` or `test:fast` never repairs coverage — only a
+  another checkout to this one, takes every file changed since out of the cache so the run covers it afresh, and
+  deletes a cache it cannot place so the run records coverage afresh. After a failed coverage gate it drops the
+  coverage that run saved, so the next run records afresh. It prints a `TIA:` line when it does any of these. Running `composer test` or `test:fast` never repairs coverage — only a
   coverage run writes it.
 - **Keep the coverage gate unfiltered.** `--exclude-testsuite`, `--group`, `--filter` and the other selection flags make
   Pest switch TIA off, so every preflight would re-run the whole suite. `toolkit:preflight` refuses such a gate; with

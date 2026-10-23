@@ -112,19 +112,36 @@ final readonly class TiaBaselines
             $done[] = sprintf('replaying from %s, the commit the coverage cache matches', mb_substr($stamp->sha, 0, 7));
         }
 
+        $changed = array_map(fn (string $path): string => $here.DIRECTORY_SEPARATOR.$path, $this->changedSince($root, $stamp));
+        $forgotten = $changed === [] ? 0 : CoverageCache::forget($directory.DIRECTORY_SEPARATOR.CoverageCache::FILE, $changed);
+
+        if ($forgotten === null) {
+            File::delete($directory.DIRECTORY_SEPARATOR.CoverageCache::FILE);
+            File::delete($directory.DIRECTORY_SEPARATOR.CoverageStamp::FILE);
+
+            return 'TIA: the coverage cache could not be read. Recording coverage afresh.';
+        }
+
+        if ($forgotten > 0) {
+            $done[] = sprintf('re-covering %d changed file%s', $forgotten, $forgotten === 1 ? '' : 's');
+        }
+
         return $done === [] ? null : 'TIA: '.implode('; ', $done).'.';
     }
 
     /**
-     * What a coverage run starting now covers: the checked-out commit, plus every file that
-     * differs from it. Uncommitted files go in with an empty hash, which matches no file,
-     * so the run after this one replays them whatever they hold by then.
+     * Sets the coverage cache's stamp aside before a coverage gate runs, and notes what
+     * the run covers: the checked-out commit, plus every file that differs from it.
+     * Uncommitted files go in with an empty hash, which matches no file, so the run after
+     * this one replays them whatever they hold by then. With the stamp aside, a run that
+     * dies part-way leaves a cache the next run will not trust.
      */
-    public function coverageCheckpoint(string $root): ?CoverageStamp
+    public function startCoverageRun(string $root): ?CoverageRun
     {
+        $directory = $this->cache->directory($root);
         $sha = $this->git($root, ['rev-parse', 'HEAD']);
 
-        if ($sha === null || $sha === '') {
+        if ($directory === null || $sha === null || $sha === '') {
             return null;
         }
 
@@ -132,30 +149,59 @@ final readonly class TiaBaselines
         $untracked = (string) $this->git($root, ['ls-files', '--others', '--exclude-standard']);
         $dirty = preg_split('/\R/', mb_trim($changed."\n".$untracked), -1, PREG_SPLIT_NO_EMPTY) ?: [];
 
-        return new CoverageStamp($this->realRoot($root), $sha, array_fill_keys($dirty, ''));
+        $previous = CoverageStamp::read($directory);
+        File::delete($directory.DIRECTORY_SEPARATOR.CoverageStamp::FILE);
+
+        return new CoverageRun($directory, new CoverageStamp($this->realRoot($root), $sha, array_fill_keys($dirty, '')), $previous, time());
     }
 
     /**
-     * Files $checkpoint as what the coverage cache matches, when a run since $since
-     * rewrote the cache and the checkout stayed on the same commit. A cache rewritten
-     * across a commit is left unstamped, so the next run records coverage afresh.
+     * Settles the stamp once the coverage gate is done.
+     *
+     * Pest writes its coverage cache whether the tests passed or not, and a test that
+     * stopped part-way leaves only the lines it reached. So a cache the run rewrote is
+     * stamped only when the gate passed, on the commit it started on. A failed gate's
+     * cache is deleted, and the next run records coverage afresh. A cache the run did
+     * not touch gets its old stamp back. Returns a line to print, or null.
      */
-    public function stampCoverage(string $root, CoverageStamp $checkpoint, int $since): void
+    public function finishCoverageRun(string $root, CoverageRun $run, bool $passed): ?string
     {
-        $directory = $this->cache->directory($root);
-        $modifiedAt = $directory === null ? null : CoverageCache::modifiedAt($directory);
+        $modifiedAt = CoverageCache::modifiedAt($run->directory);
 
-        if ($directory === null || $modifiedAt === null || $modifiedAt < $since) {
-            return;
+        if ($modifiedAt === null || $modifiedAt < $run->startedAt) {
+            $run->previous?->writeTo($run->directory);
+
+            return null;
         }
 
-        if ($this->git($root, ['rev-parse', 'HEAD']) !== $checkpoint->sha) {
-            File::delete($directory.DIRECTORY_SEPARATOR.CoverageStamp::FILE);
+        if (! $passed) {
+            File::delete($run->directory.DIRECTORY_SEPARATOR.CoverageCache::FILE);
 
-            return;
+            return 'TIA: the coverage gate failed, so the coverage it saved is not trusted. The next run records coverage afresh.';
         }
 
-        $checkpoint->writeTo($directory);
+        if ($this->git($root, ['rev-parse', 'HEAD']) === $run->checkpoint->sha) {
+            $run->checkpoint->writeTo($run->directory);
+        }
+
+        return null;
+    }
+
+    /**
+     * Files that differ from what the stamp covered: committed since its commit, uncommitted
+     * now, or uncommitted when it was taken. Paths relative to the checkout.
+     *
+     * @return array<int, string>
+     */
+    private function changedSince(string $root, CoverageStamp $stamp): array
+    {
+        $output = implode("\n", [
+            (string) $this->git($root, ['diff', '--name-only', $stamp->sha]),
+            (string) $this->git($root, ['ls-files', '--others', '--exclude-standard']),
+        ]);
+        $files = preg_split('/\R/', $output, -1, PREG_SPLIT_NO_EMPTY) ?: [];
+
+        return array_values(array_unique([...$files, ...array_keys($stamp->tree)]));
     }
 
     /**
