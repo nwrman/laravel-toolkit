@@ -381,3 +381,37 @@ it('lines the coverage cache up before a TIA coverage gate and stamps it after',
 
     expect(CoverageStamp::read($cache))->toEqual(new CoverageStamp($repo, $sha, []));
 });
+
+it('drops the coverage cache a failed coverage gate wrote', function (): void {
+    $repo = realpath($this->tempDir).'/app';
+    $cache = realpath($this->tempDir).'/cache';
+    File::ensureDirectoryExists($repo);
+    git($repo, 'init', '--quiet', '--initial-branch=main');
+    git($repo, 'commit', '--quiet', '--allow-empty', '-m', 'base');
+    File::ensureDirectoryExists($cache);
+
+    $this->app->setBasePath($repo);
+    app()->instance(PestCache::class, new class($cache) extends PestCache
+    {
+        public function __construct(private readonly string $cache) {}
+
+        public function directory(string $root): string
+        {
+            return $this->cache;
+        }
+    });
+    config([
+        'toolkit.tia.enabled' => true,
+        'toolkit.gates' => ['pest-coverage' => [
+            'label' => 'Pest Coverage',
+            'command' => sprintf('printf partial | gzip > %s/coverage.bin.gz && echo pest --coverage && exit 1', $cache),
+        ]],
+    ]);
+
+    $this->artisan('toolkit:preflight', ['--no-notify' => true])
+        ->expectsOutputToContain('TIA: the coverage gate failed, so the coverage it saved is not trusted. The next run records coverage afresh.')
+        ->assertExitCode(1);
+
+    expect(File::exists($cache.'/coverage.bin.gz'))->toBeFalse()
+        ->and(File::exists($cache.'/'.CoverageStamp::FILE))->toBeFalse();
+});

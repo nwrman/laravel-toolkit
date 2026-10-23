@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Nwrman\LaravelToolkit\Tia;
 
 use Illuminate\Support\Facades\File;
+use SebastianBergmann\CodeCoverage\CodeCoverage;
 
 /**
  * Pest's coverage cache: a gzipped, PHP-serialized CodeCoverage object that names every
@@ -62,6 +63,43 @@ final class CoverageCache
         }
 
         return $out.substr($serialized, $offset);
+    }
+
+    /**
+     * Removes $paths from the cache, and returns how many it held, or null when the cache
+     * cannot be read.
+     *
+     * Pest merges a run's coverage into the cache line by line. When a file changed, the
+     * cache still holds the old version's line numbers: a line that was code then and is
+     * a comment or a closing bracket now stays "executable, not covered", because the new
+     * run never writes that line. Removing a changed file lets the run fill it in whole;
+     * TIA replays every test that touches it.
+     *
+     * @param  array<int, string>  $paths
+     */
+    public static function forget(string $file, array $paths): ?int
+    {
+        $bytes = @gzdecode(File::get($file));
+        $coverage = $bytes === false ? null : @unserialize($bytes);
+
+        if (! $coverage instanceof CodeCoverage) {
+            return null;
+        }
+
+        $data = $coverage->getData(true);
+        $lines = $data->lineCoverage();
+        $functions = $data->functionCoverage();
+        $held = array_intersect_key($lines, array_flip($paths));
+
+        if ($held === []) {
+            return 0;
+        }
+
+        $data->setLineCoverage(array_diff_key($lines, $held));
+        $data->setFunctionCoverage(array_diff_key($functions, $held));
+        File::put($file, (string) gzencode(serialize($coverage)));
+
+        return count($held);
     }
 
     /**

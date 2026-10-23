@@ -2,6 +2,28 @@
 
 All notable changes to `laravel-toolkit` will be documented in this file.
 
+## v0.4.2 — 2026-10-22
+
+### Changed files no longer leave phantom gaps in preflight coverage
+
+Fixes #16. After a merge brought in new versions of several files, preflight's coverage gate kept failing on lines
+that every test runs (a `);`, the first line of a method), while `composer test:ci` read 100 %.
+
+Pest merges each run's coverage into its cache line by line. When a file changed, the cache still holds the old
+version's line numbers. A line that was code then and is a comment or a closing bracket now stays "executable, not
+covered": the tests that ran it are re-run and their old hits removed, but the new run never writes that line again.
+With a gate at exactly 100 % it fails on code that is fully tested; with a lower minimum the number just drifts down.
+Reproduced in the starter by adding one comment line above a covered statement.
+
+- **Before the coverage gate, preflight takes every file changed since the stamp out of the coverage cache**: files
+  changed in commits since, uncommitted now, or uncommitted when the stamp was taken. TIA replays every test that
+  touches a changed file, so the run fills each one in whole. Preflight prints `TIA: re-covering N changed files.`
+- **A failed coverage gate's cache is not kept.** Preflight sets the stamp aside while the gate runs and stamps the
+  cache again only when the gate passes. When the gate fails after writing coverage, the cache is deleted and the next
+  run records afresh; when it fails before writing any, the old stamp comes back. An interrupted run leaves no stamp.
+  The cost: while coverage is really too low, each retry is a full coverage run.
+- **The Running Tests guideline** describes both.
+
 ## v0.4.1 — 2026-10-22
 
 ### The coverage gate stops reading a stale or foreign coverage cache

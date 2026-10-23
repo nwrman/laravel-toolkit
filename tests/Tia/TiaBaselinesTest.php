@@ -283,35 +283,87 @@ it('deletes a coverage cache it cannot place, so the run records coverage afresh
     'a commit outside the branch' => [true, 'TIA: the coverage cache is from %s, outside this branch\'s history. Recording coverage afresh.'],
 ]);
 
-it('stamps the coverage cache with the commit the run covered, uncommitted files marked to replay', function (): void {
+/**
+ * What Pest leaves when a coverage run finishes: a coverage cache written just now.
+ */
+function rewriteCoverage(string $cacheDir): void
+{
+    File::ensureDirectoryExists($cacheDir);
+    File::put($cacheDir.'/coverage.bin.gz', (string) gzencode(serialize(['rewritten' => true])));
+}
+
+it('stamps the coverage cache with the commit a passing gate covered, uncommitted files marked to replay', function (): void {
     $t1 = ticket($this->repo, 'feature/t1-one');
     $sha = git($t1, 'rev-parse', 'HEAD');
     File::put($t1.'/Dirty.php', '<?php');
-    $checkpoint = $this->baselines->coverageCheckpoint($t1);
-    recordRun($this->caches, $t1, 'feature/t1-one', null);
 
-    $this->baselines->stampCoverage($t1, $checkpoint, time() - 5);
+    $run = $this->baselines->startCoverageRun($t1);
+    rewriteCoverage(cacheOf($this->caches, $t1));
 
-    expect(CoverageStamp::read(cacheOf($this->caches, $t1)))->toEqual(new CoverageStamp($t1, $sha, ['Dirty.php' => '']));
+    expect($this->baselines->finishCoverageRun($t1, $run, passed: true))->toBeNull()
+        ->and(CoverageStamp::read(cacheOf($this->caches, $t1)))->toEqual(new CoverageStamp($t1, $sha, ['Dirty.php' => '']));
 });
 
-it('does not stamp a coverage cache the run did not write', function (): void {
+it('drops the coverage a failed gate saved, so the next run records afresh', function (): void {
     $t1 = ticket($this->repo, 'feature/t1-one');
-    recordRun($this->caches, $t1, 'feature/t1-one', git($t1, 'rev-parse', 'HEAD'), stamp: false);
+    recordRun($this->caches, $t1, 'feature/t1-one', git($t1, 'rev-parse', 'HEAD'));
+
+    $run = $this->baselines->startCoverageRun($t1);
+    rewriteCoverage(cacheOf($this->caches, $t1));
+
+    expect($this->baselines->finishCoverageRun($t1, $run, passed: false))->toBe('TIA: the coverage gate failed, so the coverage it saved is not trusted. The next run records coverage afresh.')
+        ->and(File::exists(cacheOf($this->caches, $t1).'/coverage.bin.gz'))->toBeFalse()
+        ->and(File::exists(cacheOf($this->caches, $t1).'/'.CoverageStamp::FILE))->toBeFalse();
+});
+
+it('leaves no stamp while a coverage gate runs, so an interrupted run is not trusted', function (): void {
+    $t1 = ticket($this->repo, 'feature/t1-one');
+    recordRun($this->caches, $t1, 'feature/t1-one', git($t1, 'rev-parse', 'HEAD'));
+
+    $this->baselines->startCoverageRun($t1);
+    rewriteCoverage(cacheOf($this->caches, $t1));
+
+    expect(File::exists(cacheOf($this->caches, $t1).'/'.CoverageStamp::FILE))->toBeFalse()
+        ->and($this->baselines->alignCoverage($t1))->toBe('TIA: no record of the commit the coverage cache matches. Recording coverage afresh.');
+});
+
+it('gives the stamp back when the gate failed before it wrote coverage', function (bool $passed): void {
+    $t1 = ticket($this->repo, 'feature/t1-one');
+    recordRun($this->caches, $t1, 'feature/t1-one', $sha = git($t1, 'rev-parse', 'HEAD'));
     touch(cacheOf($this->caches, $t1).'/coverage.bin.gz', time() - 60);
 
-    $this->baselines->stampCoverage($t1, $this->baselines->coverageCheckpoint($t1), time());
+    $run = $this->baselines->startCoverageRun($t1);
 
-    expect(File::exists(cacheOf($this->caches, $t1).'/'.CoverageStamp::FILE))->toBeFalse();
-});
+    expect($this->baselines->finishCoverageRun($t1, $run, $passed))->toBeNull()
+        ->and(CoverageStamp::read(cacheOf($this->caches, $t1)))->toEqual(new CoverageStamp($t1, $sha, []));
+})->with(['failed' => false, 'passed' => true]);
 
-it('unstamps a coverage cache written while the checkout moved to another commit', function (): void {
+it('leaves unstamped a cache written while the checkout moved to another commit', function (): void {
     $t1 = ticket($this->repo, 'feature/t1-one');
-    $checkpoint = $this->baselines->coverageCheckpoint($t1);
-    recordRun($this->caches, $t1, 'feature/t1-one', git($t1, 'rev-parse', 'HEAD'));
+
+    $run = $this->baselines->startCoverageRun($t1);
+    rewriteCoverage(cacheOf($this->caches, $t1));
     git($t1, 'commit', '--quiet', '--allow-empty', '-m', 'committed during the run');
 
-    $this->baselines->stampCoverage($t1, $checkpoint, time() - 5);
+    expect($this->baselines->finishCoverageRun($t1, $run, passed: true))->toBeNull()
+        ->and(File::exists(cacheOf($this->caches, $t1).'/'.CoverageStamp::FILE))->toBeFalse();
+});
 
-    expect(File::exists(cacheOf($this->caches, $t1).'/'.CoverageStamp::FILE))->toBeFalse();
+it('re-covers the files changed since the stamp, so their old line numbers cannot linger', function (): void {
+    $t1 = ticket($this->repo, 'feature/t1-one');
+    recordRun($this->caches, $t1, 'feature/t1-one', git($t1, 'rev-parse', 'HEAD'));
+    coverageCacheFile(cacheOf($this->caches, $t1).'/coverage.bin.gz', [
+        $t1.'/app/Committed.php' => [13 => ['t1']],
+        $t1.'/app/Uncommitted.php' => [5 => ['t2']],
+        $t1.'/app/Unchanged.php' => [8 => ['t3']],
+    ]);
+    File::ensureDirectoryExists($t1.'/app');
+    File::put($t1.'/app/Committed.php', '<?php');
+    git($t1, 'add', 'app/Committed.php');
+    git($t1, 'commit', '--quiet', '-m', 'change a file');
+    movePestCommit(cacheOf($this->caches, $t1), 'feature/t1-one', git($t1, 'rev-parse', 'HEAD^'));
+    File::put($t1.'/app/Uncommitted.php', '<?php');
+
+    expect($this->baselines->alignCoverage($t1))->toBe('TIA: re-covering 2 changed files.')
+        ->and(cachedLines(cacheOf($this->caches, $t1).'/coverage.bin.gz'))->toBe([$t1.'/app/Unchanged.php' => [8 => ['t3']]]);
 });
