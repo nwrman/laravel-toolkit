@@ -68,14 +68,21 @@ suite; an unchanged tree runs nothing; a comment-only edit or a formatter pass r
 - **Coverage works through TIA.** A replayed run stores what each test covered, so `composer preflight`'s coverage
   gate reports the same numbers as a full run — just faster. `composer test:ci` runs with `--no-tia`, because it
   answers "would CI pass?" and CI runs every test.
+- **Preflight keeps the coverage cache honest.** Before the coverage gate it moves Pest's commit back to the one the
+  coverage cache matches (a plain `composer test` moves it on without updating coverage), moves a cache recorded in
+  another checkout to this one, and deletes a cache it cannot place so the run records coverage afresh. It prints a
+  `TIA:` line when it does any of these. Running `composer test` or `test:fast` never repairs coverage — only a
+  coverage run writes it.
 - **Keep the coverage gate unfiltered.** `--exclude-testsuite`, `--group`, `--filter` and the other selection flags make
   Pest switch TIA off, so every preflight would re-run the whole suite. `toolkit:preflight` refuses such a gate; with
   TIA on, Browser specs only run when a change can reach them, so there is nothing to gain by excluding them.
 - The graph lives outside the repo in `~/.pest/tia/` and rebuilds itself when `composer.lock`, `phpunit.xml`, the vite
   config or the node lockfile change. Nothing to gitignore.
-- If a coverage number looks wrong — a percentage that will not move, or a file you never touched reported as
+- If a coverage number still looks wrong — a percentage that will not move, or a file you never touched reported as
   uncovered — check it with `composer test:ci` before writing a single test. If the two disagree, the replay is
-  wrong: clear the cache (`rm -rf ~/.pest/tia/<project-key>-*`) and report it to Pest with the two outputs.
+  wrong: that is a toolkit bug. Report it to `nwrman/laravel-toolkit` with both outputs and the `TIA:` line, then
+  delete the coverage cache (`vendor/bin/pest --baseline` prints its directory; remove `coverage.bin.gz` there) and
+  re-run the coverage gate.
 
 ## After a failure
 

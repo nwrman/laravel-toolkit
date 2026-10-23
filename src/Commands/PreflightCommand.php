@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\Process;
 use Laravel\AgentDetector\AgentDetector;
 use Nwrman\LaravelToolkit\Concerns\ManagesFrontendBuild;
 use Nwrman\LaravelToolkit\Concerns\SendsDesktopNotifications;
+use Nwrman\LaravelToolkit\Tia\TiaBaselines;
 use Override;
 
 final class PreflightCommand extends Command
@@ -74,7 +75,21 @@ final class PreflightCommand extends Command
         $this->info(sprintf('Running %d gate%s in parallel...', $gateCount, $gateCount > 1 ? 's' : ''));
         $this->newLine();
 
+        $tia = $this->replaysCoverage($gatesToRun) ? app(TiaBaselines::class) : null;
+        $aligned = $tia?->alignCoverage(base_path());
+
+        if ($aligned !== null) {
+            $this->line($aligned);
+            $this->newLine();
+        }
+
+        $checkpoint = $tia?->coverageCheckpoint(base_path());
+        $startedAt = time();
         $results = $this->runGatesInParallel($gatesToRun, $isAgent);
+
+        if ($tia !== null && $checkpoint !== null) {
+            $tia->stampCoverage(base_path(), $checkpoint, $startedAt);
+        }
 
         $hasFailures = $this->hasFailures($results);
 
@@ -150,18 +165,49 @@ final class PreflightCommand extends Command
         return $rejected;
     }
 
-    private function partialSelectionFlag(string $command): ?string
+    /**
+     * Whether a selected gate runs Pest coverage through TIA, and so reads and writes
+     * its coverage cache.
+     *
+     * @param  array<int, string>  $gatesToRun
+     */
+    private function replaysCoverage(array $gatesToRun): bool
     {
+        if (! (bool) config('toolkit.tia.enabled', false)) {
+            return false;
+        }
+
+        $gates = $this->gates();
+
+        return array_any($gatesToRun, fn (string $gate): bool => $this->pestCoverageRuns($gates[$gate]['command']) !== []);
+    }
+
+    /**
+     * The tokens of each Pest coverage run in a gate command.
+     *
+     * @return array<int, array<int, string>>
+     */
+    private function pestCoverageRuns(string $command): array
+    {
+        $runs = [];
+
         foreach (preg_split('/&&|\|\||;/', $command) ?: [] as $segment) {
             $tokens = preg_split('/\s+/', mb_trim($segment), -1, PREG_SPLIT_NO_EMPTY) ?: [];
 
             $runsPest = array_any($tokens, fn (string $token): bool => str_ends_with($token, 'pest'));
             $collectsCoverage = array_any($tokens, fn (string $token): bool => $token === '--coverage' || str_starts_with($token, '--coverage='));
 
-            if (! $runsPest || ! $collectsCoverage) {
-                continue;
+            if ($runsPest && $collectsCoverage) {
+                $runs[] = $tokens;
             }
+        }
 
+        return $runs;
+    }
+
+    private function partialSelectionFlag(string $command): ?string
+    {
+        foreach ($this->pestCoverageRuns($command) as $tokens) {
             foreach ($tokens as $token) {
                 foreach (self::PARTIAL_SELECTION_FLAGS as $flag) {
                     if ($token === $flag || str_starts_with($token, $flag.'=')) {

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Process;
+use Nwrman\LaravelToolkit\Tia\CoverageStamp;
 use Nwrman\LaravelToolkit\Tia\PestCache;
 use Nwrman\LaravelToolkit\Tia\TiaBaselines;
 
@@ -42,16 +43,6 @@ afterEach(function (): void {
     File::deleteDirectory($this->tmp);
 });
 
-function git(string $cwd, string ...$arguments): string
-{
-    $result = Process::path($cwd)
-        ->env(['GIT_AUTHOR_NAME' => 'Test', 'GIT_AUTHOR_EMAIL' => 'test@example.com', 'GIT_COMMITTER_NAME' => 'Test', 'GIT_COMMITTER_EMAIL' => 'test@example.com'])
-        ->run(['git', ...$arguments])
-        ->throw();
-
-    return mb_trim($result->output());
-}
-
 /**
  * Cuts a worktree for $branch from $base and commits once on it, as a ticket would.
  */
@@ -65,11 +56,13 @@ function ticket(string $repo, string $branch, string $base = 'main'): string
 }
 
 /**
- * What a Pest run leaves in a checkout's cache: the graph with this branch's
- * baseline, and (after a coverage run) the coverage cache.
+ * What a run leaves in a checkout's cache: the graph with this branch's baseline, and
+ * (after a coverage preflight) the coverage cache with its stamp. The coverage names
+ * one source file by its absolute path, as Pest's does.
  */
-function recordRun(string $cacheDir, string $branch, ?string $sha, bool $complete = true, bool $coverage = true): void
+function recordRun(string $caches, string $checkout, string $branch, ?string $sha, bool $complete = true, bool $coverage = true, bool $stamp = true): void
 {
+    $cacheDir = cacheOf($caches, $checkout);
     $baseline = ['sha' => $sha, 'tree' => [], 'results' => ['tests/ExampleTest.php::it works' => ['status' => 0, 'message' => '', 'time' => 0.01, 'assertions' => 1]]];
 
     if ($complete) {
@@ -86,8 +79,35 @@ function recordRun(string $cacheDir, string $branch, ?string $sha, bool $complet
     ]));
 
     if ($coverage) {
-        File::put($cacheDir.'/coverage.bin.gz', 'coverage of '.$branch);
+        File::put($cacheDir.'/coverage.bin.gz', (string) gzencode(serialize([$checkout.'/app/Example.php' => [3 => ['tests/ExampleTest.php::it works']]])));
     }
+
+    if ($coverage && $stamp && $sha !== null) {
+        new CoverageStamp($checkout, $sha, [])->writeTo($cacheDir);
+    }
+}
+
+/**
+ * The source files the checkout's coverage cache names.
+ *
+ * @return array<int, string>
+ */
+function coveredFiles(string $cacheDir): array
+{
+    return array_keys(unserialize((string) gzdecode(File::get($cacheDir.'/coverage.bin.gz'))));
+}
+
+/**
+ * Moves Pest's commit for $branch, as a plain `composer test` does without touching coverage.
+ *
+ * @param  array<string, string>  $tree
+ */
+function movePestCommit(string $cacheDir, string $branch, string $sha, array $tree = []): void
+{
+    $graph = json_decode(File::get($cacheDir.'/graph.json'), true);
+    $graph['baselines'][$branch]['sha'] = $sha;
+    $graph['baselines'][$branch]['tree'] = $tree;
+    File::put($cacheDir.'/graph.json', (string) json_encode($graph));
 }
 
 function cacheOf(string $caches, string $checkout): string
@@ -106,7 +126,7 @@ function baselinesIn(string $cacheDir): array
 it('publishes a merged ticket\'s baseline, and the next ticket inherits it', function (): void {
     $t1 = ticket($this->repo, 'feature/t1-one');
     $sha = git($t1, 'rev-parse', 'HEAD');
-    recordRun(cacheOf($this->caches, $t1), 'feature/t1-one', $sha);
+    recordRun($this->caches, $t1, 'feature/t1-one', $sha);
     git($this->repo, 'merge', '--quiet', '--no-ff', '-m', 'merge t1', 'feature/t1-one');
 
     expect($this->baselines->publish($t1))->toBe(sprintf('Published the TIA baseline at %s for main.', mb_substr($sha, 0, 7)));
@@ -116,13 +136,14 @@ it('publishes a merged ticket\'s baseline, and the next ticket inherits it', fun
     expect($this->baselines->inherit($t2))->toBe(sprintf('Inherited the main TIA baseline at %s.', mb_substr($sha, 0, 7)))
         ->and(array_keys(baselinesIn(cacheOf($this->caches, $t2))))->toBe(['feature/t2-two'])
         ->and(baselinesIn(cacheOf($this->caches, $t2))['feature/t2-two']['sha'])->toBe($sha)
-        ->and(File::get(cacheOf($this->caches, $t2).'/coverage.bin.gz'))->toBe('coverage of feature/t1-one')
+        ->and(coveredFiles(cacheOf($this->caches, $t2)))->toBe([$t2.'/app/Example.php'])
+        ->and(CoverageStamp::read(cacheOf($this->caches, $t2))?->root)->toBe($t2)
         ->and($this->baselines->problem($t2))->toBeNull();
 });
 
 it('does not publish a ticket that has not merged', function (): void {
     $t1 = ticket($this->repo, 'feature/t1-one');
-    recordRun(cacheOf($this->caches, $t1), 'feature/t1-one', git($t1, 'rev-parse', 'HEAD'));
+    recordRun($this->caches, $t1, 'feature/t1-one', git($t1, 'rev-parse', 'HEAD'));
 
     expect($this->baselines->publish($t1))->toStartWith('Not published: ')
         ->and($this->baselines->publish($t1))->toEndWith(' is not merged into main yet.')
@@ -132,31 +153,32 @@ it('does not publish a ticket that has not merged', function (): void {
 it('publishes a PR merged on the remote before the local base has pulled it', function (): void {
     $t1 = ticket($this->repo, 'feature/t1-one');
     $sha = git($t1, 'rev-parse', 'HEAD');
-    recordRun(cacheOf($this->caches, $t1), 'feature/t1-one', $sha);
+    recordRun($this->caches, $t1, 'feature/t1-one', $sha);
     git($t1, 'push', '--quiet', 'origin', 'feature/t1-one:main');
 
     expect(Process::path($this->repo)->run(['git', 'merge-base', '--is-ancestor', $sha, 'main'])->successful())->toBeFalse()
         ->and($this->baselines->publish($t1))->toBe(sprintf('Published the TIA baseline at %s for main.', mb_substr($sha, 0, 7)));
 });
 
-it('refuses to hand over a baseline a later run cannot trust', function (?string $sha, bool $complete, bool $coverage, string $reason): void {
+it('refuses to hand over a baseline a later run cannot trust', function (?string $sha, bool $complete, bool $coverage, bool $stamp, string $reason): void {
     $t1 = ticket($this->repo, 'feature/t1-one');
-    recordRun(cacheOf($this->caches, $t1), 'feature/t1-one', $sha === 'HEAD' ? git($t1, 'rev-parse', 'HEAD') : $sha, $complete, $coverage);
+    recordRun($this->caches, $t1, 'feature/t1-one', $sha === 'HEAD' ? git($t1, 'rev-parse', 'HEAD') : $sha, $complete, $coverage, $stamp);
     git($this->repo, 'merge', '--quiet', '--no-ff', '-m', 'merge t1', 'feature/t1-one');
 
     expect($this->baselines->publish($t1))->toBe('Not published: '.$reason.'.');
 })->with([
-    'no commit' => [null, true, true, 'the feature/t1-one baseline has no commit (a filtered or interrupted run)'],
-    'incomplete' => ['HEAD', false, true, 'the feature/t1-one baseline is incomplete'],
-    'no coverage cache' => ['HEAD', true, false, 'no coverage cache (preflight would re-record everything)'],
+    'no commit' => [null, true, true, true, 'the feature/t1-one baseline has no commit (a filtered or interrupted run)'],
+    'incomplete' => ['HEAD', false, true, true, 'the feature/t1-one baseline is incomplete'],
+    'no coverage cache' => ['HEAD', true, false, true, 'no coverage cache (preflight would re-record everything)'],
+    'coverage no preflight stamped' => ['HEAD', true, true, false, 'no record of the commit its coverage cache matches (a cache no toolkit preflight wrote)'],
 ]);
 
 it('keeps the newer baseline when an older ticket lands last', function (): void {
     $older = ticket($this->repo, 'feature/t1-one');
-    recordRun(cacheOf($this->caches, $older), 'feature/t1-one', git($older, 'rev-parse', 'HEAD'));
+    recordRun($this->caches, $older, 'feature/t1-one', git($older, 'rev-parse', 'HEAD'));
     git($this->repo, 'merge', '--quiet', '--no-ff', '-m', 'merge t1', 'feature/t1-one');
     $newer = ticket($this->repo, 'feature/t2-two');
-    recordRun(cacheOf($this->caches, $newer), 'feature/t2-two', $newerSha = git($newer, 'rev-parse', 'HEAD'));
+    recordRun($this->caches, $newer, 'feature/t2-two', $newerSha = git($newer, 'rev-parse', 'HEAD'));
     git($this->repo, 'merge', '--quiet', '--no-ff', '-m', 'merge t2', 'feature/t2-two');
 
     $this->baselines->publish($newer);
@@ -170,7 +192,7 @@ it('files a ticket cut from an integration branch under that branch', function (
     $t1 = ticket($this->repo, 'feature/t1-one', 'feature/shop');
     git($this->repo, 'config', 'branch.feature/t1-one.tiaBase', 'feature/shop');
     $sha = git($t1, 'rev-parse', 'HEAD');
-    recordRun(cacheOf($this->caches, $t1), 'feature/t1-one', $sha);
+    recordRun($this->caches, $t1, 'feature/t1-one', $sha);
     git($this->repo, 'switch', '--quiet', 'feature/shop');
     git($this->repo, 'merge', '--quiet', '--no-ff', '-m', 'merge t1', 'feature/t1-one');
     git($this->repo, 'switch', '--quiet', 'main');
@@ -186,7 +208,7 @@ it('files a ticket cut from an integration branch under that branch', function (
 it('does not inherit a baseline outside the branch\'s history', function (): void {
     $t2 = ticket($this->repo, 'feature/t2-two');
     $t1 = ticket($this->repo, 'feature/t1-one');
-    recordRun(cacheOf($this->caches, $t1), 'feature/t1-one', git($t1, 'rev-parse', 'HEAD'));
+    recordRun($this->caches, $t1, 'feature/t1-one', git($t1, 'rev-parse', 'HEAD'));
     git($this->repo, 'merge', '--quiet', '--no-ff', '-m', 'merge t1', 'feature/t1-one');
     $this->baselines->publish($t1);
 
@@ -196,7 +218,7 @@ it('does not inherit a baseline outside the branch\'s history', function (): voi
 
 it('leaves a branch that already has a usable baseline alone', function (): void {
     $t1 = ticket($this->repo, 'feature/t1-one');
-    recordRun(cacheOf($this->caches, $t1), 'feature/t1-one', git($t1, 'rev-parse', 'HEAD'));
+    recordRun($this->caches, $t1, 'feature/t1-one', git($t1, 'rev-parse', 'HEAD'));
 
     expect($this->baselines->inherit($t1))->toBe('feature/t1-one already has a usable TIA baseline.');
 });
@@ -206,7 +228,90 @@ it('reports why a branch has no usable baseline', function (): void {
 
     expect($this->baselines->problem($t1))->toBe('no TIA graph');
 
-    recordRun(cacheOf($this->caches, $t1), 'main', git($this->repo, 'rev-parse', 'HEAD'));
+    recordRun($this->caches, $t1, 'main', git($this->repo, 'rev-parse', 'HEAD'));
 
     expect($this->baselines->problem($t1))->toBe('no baseline for feature/t1-one');
+});
+
+it('replays from the coverage cache\'s commit after a plain run moved Pest\'s past it', function (): void {
+    $t1 = ticket($this->repo, 'feature/t1-one');
+    $covered = git($t1, 'rev-parse', 'HEAD');
+    recordRun($this->caches, $t1, 'feature/t1-one', $covered);
+    git($t1, 'commit', '--quiet', '--allow-empty', '-m', 'tested without coverage');
+    movePestCommit(cacheOf($this->caches, $t1), 'feature/t1-one', git($t1, 'rev-parse', 'HEAD'), ['app/Dirty.php' => 'abc']);
+
+    expect($this->baselines->alignCoverage($t1))->toBe(sprintf('TIA: replaying from %s, the commit the coverage cache matches.', mb_substr($covered, 0, 7)))
+        ->and(baselinesIn(cacheOf($this->caches, $t1))['feature/t1-one']['sha'])->toBe($covered)
+        ->and(baselinesIn(cacheOf($this->caches, $t1))['feature/t1-one']['tree'])->toBe([])
+        ->and(baselinesIn(cacheOf($this->caches, $t1))['feature/t1-one']['results'])->toHaveKey('tests/ExampleTest.php::it works')
+        ->and($this->baselines->alignCoverage($t1))->toBeNull();
+});
+
+it('gives a branch running on its base\'s baseline the coverage cache\'s commit', function (): void {
+    $covered = git($this->repo, 'rev-parse', 'HEAD');
+    recordRun($this->caches, $this->repo, 'main', $covered);
+    git($this->repo, 'switch', '--quiet', '-c', 'feature/shop');
+    git($this->repo, 'commit', '--quiet', '--allow-empty', '-m', 'shop');
+
+    expect($this->baselines->alignCoverage($this->repo))->toBe(sprintf('TIA: replaying from %s, the commit the coverage cache matches.', mb_substr($covered, 0, 7)))
+        ->and(baselinesIn(cacheOf($this->caches, $this->repo))['feature/shop'])->toBe(['results' => [], 'sha' => $covered, 'tree' => []])
+        ->and(baselinesIn(cacheOf($this->caches, $this->repo))['main']['sha'])->toBe($covered);
+});
+
+it('moves a coverage cache recorded in another checkout to this one', function (): void {
+    $t1 = ticket($this->repo, 'feature/t1-one');
+    $sha = git($t1, 'rev-parse', 'HEAD');
+    recordRun($this->caches, $t1, 'feature/t1-one', $sha);
+    new CoverageStamp('/elsewhere/t0', $sha, [])->writeTo(cacheOf($this->caches, $t1));
+    File::put(cacheOf($this->caches, $t1).'/coverage.bin.gz', (string) gzencode(serialize(['/elsewhere/t0/app/Example.php' => [3 => ['t']]])));
+
+    expect($this->baselines->alignCoverage($t1))->toBe('TIA: moved the coverage cache\'s paths from /elsewhere/t0.')
+        ->and(coveredFiles(cacheOf($this->caches, $t1)))->toBe([$t1.'/app/Example.php'])
+        ->and(CoverageStamp::read(cacheOf($this->caches, $t1))?->root)->toBe($t1);
+});
+
+it('deletes a coverage cache it cannot place, so the run records coverage afresh', function (bool $stamped, string $message): void {
+    $t1 = ticket($this->repo, 'feature/t1-one');
+    $t2 = ticket($this->repo, 'feature/t2-two');
+    recordRun($this->caches, $t1, 'feature/t1-one', git($t2, 'rev-parse', 'HEAD'), stamp: $stamped);
+
+    expect($this->baselines->alignCoverage($t1))->toBe(sprintf($message, mb_substr(git($t2, 'rev-parse', 'HEAD'), 0, 7)))
+        ->and(File::exists(cacheOf($this->caches, $t1).'/coverage.bin.gz'))->toBeFalse()
+        ->and(File::exists(cacheOf($this->caches, $t1).'/'.CoverageStamp::FILE))->toBeFalse();
+})->with([
+    'no stamp' => [false, 'TIA: no record of the commit the coverage cache matches. Recording coverage afresh.'],
+    'a commit outside the branch' => [true, 'TIA: the coverage cache is from %s, outside this branch\'s history. Recording coverage afresh.'],
+]);
+
+it('stamps the coverage cache with the commit the run covered, uncommitted files marked to replay', function (): void {
+    $t1 = ticket($this->repo, 'feature/t1-one');
+    $sha = git($t1, 'rev-parse', 'HEAD');
+    File::put($t1.'/Dirty.php', '<?php');
+    $checkpoint = $this->baselines->coverageCheckpoint($t1);
+    recordRun($this->caches, $t1, 'feature/t1-one', null);
+
+    $this->baselines->stampCoverage($t1, $checkpoint, time() - 5);
+
+    expect(CoverageStamp::read(cacheOf($this->caches, $t1)))->toEqual(new CoverageStamp($t1, $sha, ['Dirty.php' => '']));
+});
+
+it('does not stamp a coverage cache the run did not write', function (): void {
+    $t1 = ticket($this->repo, 'feature/t1-one');
+    recordRun($this->caches, $t1, 'feature/t1-one', git($t1, 'rev-parse', 'HEAD'), stamp: false);
+    touch(cacheOf($this->caches, $t1).'/coverage.bin.gz', time() - 60);
+
+    $this->baselines->stampCoverage($t1, $this->baselines->coverageCheckpoint($t1), time());
+
+    expect(File::exists(cacheOf($this->caches, $t1).'/'.CoverageStamp::FILE))->toBeFalse();
+});
+
+it('unstamps a coverage cache written while the checkout moved to another commit', function (): void {
+    $t1 = ticket($this->repo, 'feature/t1-one');
+    $checkpoint = $this->baselines->coverageCheckpoint($t1);
+    recordRun($this->caches, $t1, 'feature/t1-one', git($t1, 'rev-parse', 'HEAD'));
+    git($t1, 'commit', '--quiet', '--allow-empty', '-m', 'committed during the run');
+
+    $this->baselines->stampCoverage($t1, $checkpoint, time() - 5);
+
+    expect(File::exists(cacheOf($this->caches, $t1).'/'.CoverageStamp::FILE))->toBeFalse();
 });
