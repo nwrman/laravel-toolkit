@@ -2,7 +2,7 @@
 
 All notable changes to `laravel-toolkit` will be documented in this file.
 
-## v0.4.1 — Unreleased
+## v0.4.1 — 2026-10-22
 
 ### The coverage gate stops reading a stale or foreign coverage cache
 
