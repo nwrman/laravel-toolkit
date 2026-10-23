@@ -8,16 +8,19 @@ use Illuminate\Support\Facades\File;
 
 /**
  * One branch's complete TIA baseline: Pest's graph with that branch's recorded
- * results, plus the coverage cache that lets a coverage run replay instead of record.
+ * results, plus the coverage cache that lets a coverage run replay instead of record,
+ * and the stamp saying which checkout and commit that cache matches.
  *
  * Reads and writes Pest's graph.json (schema 1) directly. Pest keys baselines by
- * branch name, so moving a baseline between branches is a re-key.
+ * branch name, so moving a baseline between branches is a re-key. The baseline's
+ * commit is the coverage stamp's, not Pest's own: a later plain run may have moved
+ * Pest's past what the coverage cache holds.
  */
 final readonly class BaselineSnapshot
 {
     public const string GRAPH = 'graph.json';
 
-    public const string COVERAGE = 'coverage.bin.gz';
+    public const string COVERAGE = CoverageCache::FILE;
 
     /**
      * @param  array<string, mixed>  $graph
@@ -28,6 +31,7 @@ final readonly class BaselineSnapshot
         public string $sha,
         private array $graph,
         private array $baseline,
+        private CoverageStamp $stamp,
     ) {}
 
     /**
@@ -72,13 +76,20 @@ final readonly class BaselineSnapshot
             throw new UnusableBaseline('no coverage cache (preflight would re-record everything)');
         }
 
-        return new self($directory, $sha, $graph, $baseline);
+        $stamp = CoverageStamp::read($directory);
+
+        if (! $stamp instanceof CoverageStamp) {
+            throw new UnusableBaseline('no record of the commit its coverage cache matches (a cache no toolkit preflight wrote)');
+        }
+
+        return new self($directory, $stamp->sha, $graph, [...$baseline, 'sha' => $stamp->sha, 'tree' => $stamp->tree], $stamp);
     }
 
     /**
      * Writes this snapshot into $directory as the only baseline, filed under $branch.
+     * Given the checkout it is for, the coverage cache's paths move to that checkout.
      */
-    public function writeTo(string $directory, string $branch): void
+    public function writeTo(string $directory, string $branch, ?string $root = null): void
     {
         File::ensureDirectoryExists($directory);
 
@@ -86,5 +97,14 @@ final readonly class BaselineSnapshot
 
         File::put($directory.DIRECTORY_SEPARATOR.self::GRAPH, (string) json_encode($graph, JSON_UNESCAPED_SLASHES));
         File::copy($this->directory.DIRECTORY_SEPARATOR.self::COVERAGE, $directory.DIRECTORY_SEPARATOR.self::COVERAGE);
+
+        $stamp = $this->stamp;
+
+        if ($root !== null) {
+            CoverageCache::rebase($directory.DIRECTORY_SEPARATOR.self::COVERAGE, $stamp->root, $root);
+            $stamp = $stamp->withRoot($root);
+        }
+
+        $stamp->writeTo($directory);
     }
 }

@@ -6,6 +6,8 @@ use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Process;
 use Illuminate\Support\Sleep;
 use Nwrman\LaravelToolkit\Commands\PreflightCommand;
+use Nwrman\LaravelToolkit\Tia\CoverageStamp;
+use Nwrman\LaravelToolkit\Tia\PestCache;
 
 beforeEach(function (): void {
     $this->tempDir = sys_get_temp_dir().'/preflight-'.uniqid();
@@ -341,4 +343,41 @@ it('runs a selection flag outside the coverage run when TIA is on', function ():
     $this->artisan('toolkit:preflight', ['--no-notify' => true])
         ->expectsOutputToContain('✓ All gates passed!')
         ->assertExitCode(0);
+});
+
+it('lines the coverage cache up before a TIA coverage gate and stamps it after', function (): void {
+    $repo = realpath($this->tempDir).'/app';
+    $cache = realpath($this->tempDir).'/cache';
+    File::ensureDirectoryExists($repo);
+    git($repo, 'init', '--quiet', '--initial-branch=main');
+    git($repo, 'commit', '--quiet', '--allow-empty', '-m', 'base');
+    $sha = git($repo, 'rev-parse', 'HEAD');
+    File::ensureDirectoryExists($cache);
+    File::put($cache.'/graph.json', (string) json_encode(['schema' => 1, 'baselines' => ['main' => ['sha' => $sha, 'tree' => [], 'results' => []]]]));
+    File::put($cache.'/coverage.bin.gz', (string) gzencode('stale'));
+
+    $this->app->setBasePath($repo);
+    app()->instance(PestCache::class, new class($cache) extends PestCache
+    {
+        public function __construct(private readonly string $cache) {}
+
+        public function directory(string $root): string
+        {
+            return $this->cache;
+        }
+    });
+    config([
+        'toolkit.tia.enabled' => true,
+        'toolkit.gates' => ['pest-coverage' => [
+            'label' => 'Pest Coverage',
+            'command' => sprintf('test ! -e %1$s/coverage.bin.gz && printf fresh | gzip > %1$s/coverage.bin.gz && echo pest --coverage', $cache),
+        ]],
+    ]);
+
+    $this->artisan('toolkit:preflight', ['--no-notify' => true])
+        ->expectsOutputToContain('TIA: no record of the commit the coverage cache matches. Recording coverage afresh.')
+        ->expectsOutputToContain('✓ All gates passed!')
+        ->assertExitCode(0);
+
+    expect(CoverageStamp::read($cache))->toEqual(new CoverageStamp($repo, $sha, []));
 });

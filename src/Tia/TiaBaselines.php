@@ -65,9 +65,131 @@ final readonly class TiaBaselines
             return sprintf('The published %s baseline (%s) is not in this branch\'s history. The first `composer test` records one.', $base, mb_substr($snapshot->sha, 0, 7));
         }
 
-        $snapshot->writeTo($directory, $branch);
+        $snapshot->writeTo($directory, $branch, $this->realRoot($root));
 
         return sprintf('Inherited the %s TIA baseline at %s.', $base, mb_substr($snapshot->sha, 0, 7));
+    }
+
+    /**
+     * Makes the coverage cache safe for the next coverage run, before it starts.
+     *
+     * A cache from another checkout has its paths moved here. A cache whose commit is
+     * known and in this branch's history gets Pest's commit moved back to it, so the run
+     * replays every test the commits since can reach. A cache with no known commit, or
+     * one outside the history, is deleted and the run records coverage afresh.
+     * Returns what it did, or null when the cache was already right.
+     */
+    public function alignCoverage(string $root): ?string
+    {
+        $directory = $this->cache->directory($root);
+        $branch = $this->branch($root);
+
+        if ($directory === null || $branch === null || CoverageCache::modifiedAt($directory) === null) {
+            return null;
+        }
+
+        $stamp = CoverageStamp::read($directory);
+
+        if (! $stamp instanceof CoverageStamp || ! $this->isAncestor($root, $stamp->sha, 'HEAD')) {
+            File::delete($directory.DIRECTORY_SEPARATOR.CoverageCache::FILE);
+            File::delete($directory.DIRECTORY_SEPARATOR.CoverageStamp::FILE);
+
+            return $stamp instanceof CoverageStamp
+                ? sprintf('TIA: the coverage cache is from %s, outside this branch\'s history. Recording coverage afresh.', mb_substr($stamp->sha, 0, 7))
+                : 'TIA: no record of the commit the coverage cache matches. Recording coverage afresh.';
+        }
+
+        $done = [];
+        $here = $this->realRoot($root);
+
+        if ($stamp->root !== $here) {
+            CoverageCache::rebase($directory.DIRECTORY_SEPARATOR.CoverageCache::FILE, $stamp->root, $here);
+            $stamp->withRoot($here)->writeTo($directory);
+            $done[] = sprintf('moved the coverage cache\'s paths from %s', $stamp->root);
+        }
+
+        if ($this->rewindGraph($directory, $branch, $stamp)) {
+            $done[] = sprintf('replaying from %s, the commit the coverage cache matches', mb_substr($stamp->sha, 0, 7));
+        }
+
+        return $done === [] ? null : 'TIA: '.implode('; ', $done).'.';
+    }
+
+    /**
+     * What a coverage run starting now covers: the checked-out commit, plus every file that
+     * differs from it. Uncommitted files go in with an empty hash, which matches no file,
+     * so the run after this one replays them whatever they hold by then.
+     */
+    public function coverageCheckpoint(string $root): ?CoverageStamp
+    {
+        $sha = $this->git($root, ['rev-parse', 'HEAD']);
+
+        if ($sha === null || $sha === '') {
+            return null;
+        }
+
+        $changed = (string) $this->git($root, ['diff', '--name-only', 'HEAD']);
+        $untracked = (string) $this->git($root, ['ls-files', '--others', '--exclude-standard']);
+        $dirty = preg_split('/\R/', mb_trim($changed."\n".$untracked), -1, PREG_SPLIT_NO_EMPTY) ?: [];
+
+        return new CoverageStamp($this->realRoot($root), $sha, array_fill_keys($dirty, ''));
+    }
+
+    /**
+     * Files $checkpoint as what the coverage cache matches, when a run since $since
+     * rewrote the cache and the checkout stayed on the same commit. A cache rewritten
+     * across a commit is left unstamped, so the next run records coverage afresh.
+     */
+    public function stampCoverage(string $root, CoverageStamp $checkpoint, int $since): void
+    {
+        $directory = $this->cache->directory($root);
+        $modifiedAt = $directory === null ? null : CoverageCache::modifiedAt($directory);
+
+        if ($directory === null || $modifiedAt === null || $modifiedAt < $since) {
+            return;
+        }
+
+        if ($this->git($root, ['rev-parse', 'HEAD']) !== $checkpoint->sha) {
+            File::delete($directory.DIRECTORY_SEPARATOR.CoverageStamp::FILE);
+
+            return;
+        }
+
+        $checkpoint->writeTo($directory);
+    }
+
+    /**
+     * Moves Pest's commit for $branch back to the stamp's. Returns whether it moved.
+     */
+    private function rewindGraph(string $directory, string $branch, CoverageStamp $stamp): bool
+    {
+        $path = $directory.DIRECTORY_SEPARATOR.BaselineSnapshot::GRAPH;
+        $graph = File::isFile($path) ? json_decode(File::get($path), true) : null;
+
+        if (! is_array($graph) || ! is_array($graph['baselines'] ?? null)) {
+            return false;
+        }
+
+        // A branch with no baseline of its own runs on its base's, so it gets one that
+        // carries only the commit; its results still come from the base.
+        $baseline = is_array($graph['baselines'][$branch] ?? null) ? $graph['baselines'][$branch] : ['results' => []];
+
+        if (($baseline['sha'] ?? null) === $stamp->sha && ($baseline['tree'] ?? []) == $stamp->tree) {
+            return false;
+        }
+
+        $graph['baselines'][$branch] = [...$baseline, 'sha' => $stamp->sha, 'tree' => (object) $stamp->tree];
+        File::put($path, (string) json_encode($graph, JSON_UNESCAPED_SLASHES));
+
+        return true;
+    }
+
+    /**
+     * The checkout's path as Pest's coverage names it: symlinks resolved.
+     */
+    private function realRoot(string $root): string
+    {
+        return realpath($root) ?: $root;
     }
 
     private function problemWith(string $root, string $branch, string $directory): ?string

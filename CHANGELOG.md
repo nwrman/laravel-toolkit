@@ -2,6 +2,41 @@
 
 All notable changes to `laravel-toolkit` will be documented in this file.
 
+## v0.4.1 — Unreleased
+
+### The coverage gate stops reading a stale or foreign coverage cache
+
+Agents in three apps kept seeing a preflight coverage number that `composer test:ci` contradicted, and wiped
+`~/.pest/tia/` by hand to get past it: 13 sessions, 5 of them in one day. Two causes, both in how the coverage cache
+was trusted:
+
+- **A cache recorded in one checkout was read in another.** Pest names every source file in its coverage cache by its
+  absolute path, and `toolkit:tia publish` / `inherit` copied that cache between worktrees as-is. The receiving
+  checkout listed the first checkout's files beside its own, so files were counted twice and the total dropped
+  (82.6 % against a real 100 %). Copying a baseline into a checkout now rewrites the paths to that checkout.
+- **A plain run moved Pest's commit past the coverage cache.** Pest keeps one commit per branch for two jobs: picking
+  the tests a change reaches, and marking what its coverage cache is current to. `composer test` and `test:fast` run
+  with a coverage driver loaded, so they move that commit, but only a coverage run updates the cache. The next
+  preflight skipped the tests for the commits in between and read their lines from a cache that predates them. That
+  failed good work (classes added since then dropped out of the report) and passed bad work (a line added since was
+  missing from the cache, so 100 % held with the line never run).
+
+What changes:
+
+- **Preflight stamps the coverage cache** (`toolkit-coverage.json`, beside Pest's cache) with the checkout, commit and
+  uncommitted files each coverage run covered.
+- **Before the coverage gate, preflight lines the cache up**: it moves Pest's commit back to the stamped one, so the
+  run replays everything since; moves a cache from another checkout to this one; and deletes a cache it cannot place
+  (no stamp, or a commit outside the branch's history) so the run records coverage afresh. It prints a `TIA:` line
+  when it does any of this.
+- **A published baseline carries its stamp**, and its commit is the stamp's. A cache no toolkit preflight stamped is
+  not published or inherited.
+- **The "Running Tests" guideline** says what preflight now does, that `composer test` never repairs coverage, and to
+  report a remaining mismatch instead of wiping the cache.
+
+On upgrade: every existing coverage cache is unstamped, so each checkout's first preflight records coverage once, in
+full. Baselines already published are ignored until the next ticket lands and publishes a stamped one.
+
 ## v0.4.0 — 2026-10-19
 
 ### New worktrees inherit a TIA baseline instead of re-recording one
