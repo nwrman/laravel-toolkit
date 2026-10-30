@@ -1,6 +1,6 @@
 ---
 name: test-quality
-description: "Tear-apart checklist for test quality — weak assertions, conditional test logic, tautologies, change detectors, setup that mirrors the implementation, unreachable staged state, internal mocks, missing edges. Use before writing tests, and to review tests (your own or another agent's) before the gate. Covers Pest and Vitest."
+description: "Tear-apart checklist for test quality — weak assertions, conditional test logic, tautologies, change detectors, setup that mirrors the implementation, unreachable staged state, internal mocks, missing edges, timeouts and retries that hide a slow or flaky test. Use before writing tests, and to review tests (your own or another agent's) before the gate. Covers Pest and Vitest."
 ---
 
 # Test Quality
@@ -122,6 +122,18 @@ The same arrangement written a third time moves into shared tooling, in this ord
 state → a helper function in `tests/Pest.php` (or a Vitest test util next to the code) → a custom `expect()` matcher.
 The helper's name states the domain state (`userOnTeamAs(Role::Admin)`), not the steps.
 
+### 10. Timeouts, retries and skips that hide a problem
+
+A test made to pass by giving it more time or more tries still has the problem; it is only hidden, and it grows.
+
+- ✗ a raised per-test or suite timeout (`{ timeout: 20_000 }`, `->timeout()`, `testTimeout` in the config);
+- ✗ a retry (`retry: 3`, `->repeat()` used to get one green run), a `skip` / `todo`, or a sleep to let something settle;
+- ✓ find the cause: an import that pulls a whole component tree, real network or disk, a missing fake, a test that
+  depends on another's state; then fix it (import less, fake the edge, isolate the state);
+- ✓ when the cause is outside the test's reach, stop and report it with the measured time. Don't paper over it.
+
+A timeout that fires only under machine load (other agents, indexing) is load, not a defect: re-run, don't raise it.
+
 ## Writing tests
 
 Before writing, list the decisions in the code and the wrong implementation each test will catch. Write the tests.
@@ -132,7 +144,7 @@ Then run this checklist over them as if someone else wrote them.
 You are the reviewer when a prompt hands you tests to grade. Do not edit them. For each test in scope:
 
 1. State the wrong implementation it catches, or `none`.
-2. Check items 1–9.
+2. Check items 1–10.
 3. Report each finding as:
 
 ```

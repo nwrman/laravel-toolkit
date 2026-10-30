@@ -23,6 +23,9 @@ implementation changes**. A test that cannot fail, or fails on every refactor, c
   tests fail on every legitimate edit and never on a bug.
 - **Cover the edges the code decides on**: failure paths, boundaries, empty input, unauthorized and other-team access
   — not only the happy path.
+- **A slow or flaky test is a finding, not a number to tune.** Never raise a timeout, add a retry, or skip or mark a
+  test to make it pass. Find why it is slow or flaky (an oversized import, real I/O, a missing fake, shared state) and
+  fix that; if you cannot, stop and report it.
 - **Setup repeated a third time moves into shared tooling**: a factory state first, then a Pest helper in
   `tests/Pest.php`, then a custom `expect()` matcher.
 
