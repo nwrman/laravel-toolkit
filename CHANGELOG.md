@@ -2,6 +2,14 @@
 
 All notable changes to `laravel-toolkit` will be documented in this file.
 
+## Unreleased
+
+### A slow or flaky test is a finding, not a timeout to raise
+
+An agent fixed a test that took ~4.5 s under coverage by raising its timeout to 20 s. The testing guideline now says
+never to raise a timeout, add a retry, or skip a test to make it pass: find the cause and fix it, or report it. The
+`test-quality` checklist gains item 10, so a review catches it too.
+
 ## v0.4.2 — 2026-10-22
 
 ### Changed files no longer leave phantom gaps in preflight coverage
