@@ -7,10 +7,8 @@ namespace Nwrman\LaravelToolkit;
 use Illuminate\Support\ServiceProvider;
 use Nwrman\LaravelToolkit\Commands\InstallCommand;
 use Nwrman\LaravelToolkit\Commands\InstallFilamentCommand;
-use Nwrman\LaravelToolkit\Commands\PreflightCommand;
-use Nwrman\LaravelToolkit\Commands\TestReportCommand;
-use Nwrman\LaravelToolkit\Commands\TestRetryCommand;
 use Nwrman\LaravelToolkit\Commands\TiaCommand;
+use Nwrman\LaravelToolkit\Config\ToolkitConfig;
 
 final class LaravelToolkitServiceProvider extends ServiceProvider
 {
@@ -34,6 +32,9 @@ final class LaravelToolkitServiceProvider extends ServiceProvider
         $this->registerPublishing();
     }
 
+    /**
+     * Gates merge per gate, the way preflight reads them ({@see ToolkitConfig::merge()}).
+     */
     private function deepMergeConfig(): void
     {
         /** @var array<string, mixed> $published */
@@ -42,27 +43,12 @@ final class LaravelToolkitServiceProvider extends ServiceProvider
         /** @var array<string, mixed> $package */
         $package = require __DIR__.'/../config/toolkit.php';
 
-        // Deep-merge gates so consumers can override a single gate without losing others
-        if (isset($published['gates']) && is_array($published['gates'])) {
-            $packageGates = is_array($package['gates'] ?? null) ? $package['gates'] : [];
-
-            $merged = array_replace_recursive($packageGates, $published['gates']);
-
-            // Allow null to remove a gate
-            $merged = array_filter($merged, fn (mixed $value): bool => $value !== null);
-
-            config(['toolkit.gates' => $merged]);
-        }
+        config(['toolkit' => ToolkitConfig::merge($package, $published)]);
     }
 
     private function registerCommands(): void
     {
-        PreflightCommand::prohibit($this->app->isProduction());
-
         $this->commands([
-            PreflightCommand::class,
-            TestReportCommand::class,
-            TestRetryCommand::class,
             TiaCommand::class,
             InstallCommand::class,
             InstallFilamentCommand::class,
