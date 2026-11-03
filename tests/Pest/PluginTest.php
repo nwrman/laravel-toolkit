@@ -39,7 +39,8 @@ afterEach(function (): void {
  */
 function runPest(string $project, array $arguments = []): Process
 {
-    $process = new Process([PHP_BINARY, 'vendor/bin/pest', ...$arguments], $project, ['XDEBUG_MODE' => 'off']);
+    // This suite's own run marks its children as nested runs; the fixture's is a run of its own.
+    $process = new Process([PHP_BINARY, 'vendor/bin/pest', ...$arguments], $project, ['XDEBUG_MODE' => 'off', 'TOOLKIT_PEST_RUN' => false]);
     $process->run();
 
     return $process;
@@ -141,7 +142,7 @@ it('re-runs exactly one failed test with the command the report prints for it', 
     runPest($this->project);
     preg_match('/Re-run it:\n\n```bash\n(.+)\n```/', (string) file_get_contents($this->project.'/storage/logs/test-failures.md'), $printed);
 
-    $rerun = Process::fromShellCommandline(str_replace('vendor/bin/pest', escapeshellarg(PHP_BINARY).' vendor/bin/pest', $printed[1]), $this->project, ['XDEBUG_MODE' => 'off']);
+    $rerun = Process::fromShellCommandline(str_replace('vendor/bin/pest', escapeshellarg(PHP_BINARY).' vendor/bin/pest', $printed[1]), $this->project, ['XDEBUG_MODE' => 'off', 'TOOLKIT_PEST_RUN' => false]);
     $rerun->run();
 
     expect($printed[1])->toStartWith('vendor/bin/pest ')
@@ -168,6 +169,20 @@ it('drops an earlier failure whose test file is gone', function (): void {
     runPest($this->project, ['--filter=it adds']);
 
     expect(file_exists($this->project.'/storage/logs/test-failures.json'))->toBeFalse();
+});
+
+it('leaves the report and JUnit file alone in a Pest run another reporting run started', function (): void {
+    touch($this->project.'/fail');
+    runPest($this->project);
+    $report = file_get_contents($this->project.'/storage/logs/test-failures.json');
+    $junit = file_get_contents($this->project.'/storage/logs/test-results.xml');
+
+    $nested = new Process([PHP_BINARY, 'vendor/bin/pest', '--filter=it adds'], $this->project, ['XDEBUG_MODE' => 'off', 'TOOLKIT_PEST_RUN' => '1']);
+    $nested->run();
+
+    expect($nested->getExitCode())->toBe(0)
+        ->and(file_get_contents($this->project.'/storage/logs/test-failures.json'))->toBe($report)
+        ->and(file_get_contents($this->project.'/storage/logs/test-results.xml'))->toBe($junit);
 });
 
 it('leaves the Browser suite out with --toolkit-no-browser', function (): void {

@@ -333,14 +333,10 @@ final readonly class Preflight
      */
     private function stopAll(array $running, array $startedAt, array $outputs, array &$results, array $labels): void
     {
+        $this->tree->terminate(...array_values(array_filter(array_map(fn (InvokedProcess $process): mixed => $process->id(), $running), is_int(...))));
+
         foreach ($running as $key => $process) {
             $label = $labels[$key] ?? $key;
-            $pid = $process->id();
-
-            if (is_int($pid)) {
-                $this->tree->terminate($pid);
-            }
-
             $this->settle($process);
             $results[$key] = [
                 'status' => self::STOPPED,

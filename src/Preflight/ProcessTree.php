@@ -19,21 +19,25 @@ class ProcessTree
 
     public function __construct(private readonly Factory $process) {}
 
-    public function terminate(int $pid): void
+    /**
+     * Stops every tree at once, so they share one grace period.
+     */
+    public function terminate(int ...$pids): void
     {
-        $descendants = $this->descendants($pid);
+        $pids = array_values($pids);
+        $descendants = array_merge(...array_map($this->descendants(...), $pids));
 
-        $this->signal([...$descendants, $pid], SIGTERM);
+        $this->signal([...$descendants, ...$pids], SIGTERM);
 
-        // $pid is this process's child: once it exits it stays a zombie until the caller
-        // reaps it, so only the descendants are waited for.
+        // Each of $pids is this process's child: once it exits it stays a zombie until the
+        // caller reaps it, so only the descendants are waited for.
         $deadline = microtime(true) + self::GRACE_SECONDS;
 
         while (microtime(true) < $deadline && array_any($descendants, $this->alive(...))) {
             usleep(100_000);
         }
 
-        $this->kill([...array_values(array_filter($descendants, $this->alive(...))), $pid]);
+        $this->kill([...array_values(array_filter($descendants, $this->alive(...))), ...$pids]);
     }
 
     /**

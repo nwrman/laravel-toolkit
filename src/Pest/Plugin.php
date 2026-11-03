@@ -52,6 +52,14 @@ final class Plugin implements AddsOutput, HandlesArguments
     private const string NO_BROWSER_GLOBAL = 'TOOLKIT_NO_BROWSER';
 
     /**
+     * Marks the processes a reporting run starts, through `$_ENV` as Pest's own globals
+     * do: Symfony Process hands `$_ENV` to every child. A test that starts Pest itself
+     * (a guard test running the suite against a bad database, say) would otherwise
+     * overwrite this run's report and JUnit file with its own.
+     */
+    private const string RUN_ENV = 'TOOLKIT_PEST_RUN';
+
+    /**
      * Runs that execute no tests, or that another plugin takes over.
      */
     private const array PASSIVE_OPTIONS = [
@@ -92,9 +100,12 @@ final class Plugin implements AddsOutput, HandlesArguments
             $this->excludeBrowserSpecs($root);
         }
 
-        if (array_any(self::PASSIVE_OPTIONS, fn (string $option): bool => $this->hasArgument($option, $arguments))) {
+        if (self::insideAnotherRun() || array_any(self::PASSIVE_OPTIONS, fn (string $option): bool => $this->hasArgument($option, $arguments))) {
             return $arguments;
         }
+
+        // Pest processes a test starts inherit this, and leave this run's report alone.
+        $_ENV[self::RUN_ENV] = '1';
 
         $this->config = ToolkitConfig::load($root);
         /** @var array<int, string> $argv */
@@ -155,6 +166,11 @@ final class Plugin implements AddsOutput, HandlesArguments
         $this->notifier()->notify('Tests', $failures === [] ? 'The run failed — check the report ✗' : sprintf('%d test(s) failed ✗', count($failures)), 'Basso');
 
         return $exitCode;
+    }
+
+    private static function insideAnotherRun(): bool
+    {
+        return ($_SERVER[self::RUN_ENV] ?? $_ENV[self::RUN_ENV] ?? getenv(self::RUN_ENV)) === '1';
     }
 
     private function excludeBrowserSpecs(string $root): void

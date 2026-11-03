@@ -27,9 +27,9 @@ beforeEach(function (): void {
         /** @var array<int, int> */
         public array $stopped = [];
 
-        public function terminate(int $pid): void
+        public function terminate(int ...$pids): void
         {
-            $this->stopped[] = $pid;
+            array_push($this->stopped, ...$pids);
         }
     };
     $this->cache = $this->root.'/pest-cache';
