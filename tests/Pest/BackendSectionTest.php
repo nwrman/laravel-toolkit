@@ -64,21 +64,56 @@ it('reports nothing for a run that passed', function (): void {
     expect(BackendSection::from($this->junit, time() - 5, 0, 'pest'))->toBeNull();
 });
 
-it('says why when Pest failed without writing results', function (bool $stale): void {
-    if ($stale) {
-        junitWith($this->junit, '<testcase name="it adds" class="Tests\Unit\MathTest" file="tests/Unit/MathTest.php::it adds"><failure>old</failure></testcase>');
-        touch($this->junit, time() - 600);
-    }
+const NO_RESULTS_NOTE = 'Pest exited with code 255 and wrote no test results: it stopped before the run ended (a fatal error, a crash, or a bootstrap failure). Read the terminal output above the summary.';
+
+it('says why when Pest failed without writing results', function (): void {
+    $section = BackendSection::from($this->junit, time() - 5, 255, 'pest');
+
+    expect($section['failures'])->toBe([])
+        ->and($section['notes'])->toBe([NO_RESULTS_NOTE]);
+});
+
+it('reads a JUnit file older than the run as no results, not as this run\'s', function (): void {
+    junitWith($this->junit, '<testcase name="it adds" class="Tests\Unit\MathTest" file="tests/Unit/MathTest.php::it adds"><failure>old</failure></testcase>');
+    touch($this->junit, time() - 600);
 
     $section = BackendSection::from($this->junit, time() - 5, 255, 'pest');
 
     expect($section['failures'])->toBe([])
-        ->and($section['notes'])->toBe(['Pest exited with code 255 and wrote no test results: it stopped before the run ended (a fatal error, a crash, or a bootstrap failure). Read the terminal output above the summary.']);
-})->with(['no file' => false, 'a file from an earlier run' => true]);
+        ->and($section['notes'])->toBe([NO_RESULTS_NOTE]);
+});
 
 it('says why when Pest failed although no test did', function (): void {
     junitWith($this->junit, '<testcase name="it adds" class="Tests\Unit\MathTest" file="tests/Unit/MathTest.php::it adds"/>');
 
     expect(BackendSection::from($this->junit, time() - 5, 1, 'pest')['notes'])
         ->toBe(['Pest exited with code 1, but no test failed. Look for a risky test, a warning or a deprecation the configuration treats as a failure, in the terminal output.']);
+});
+
+it('keeps the earlier failures of tests this run did not run, and drops those it ran', function (): void {
+    junitWith($this->junit, '<testcase name="it subtracts" class="Tests\Unit\MathTest" file="tests/Unit/MathTest.php::it subtracts"/>');
+    $earlier = [
+        ['file' => 'tests/Unit/MathTest.php', 'class' => 'Tests\\Unit\\MathTest', 'name' => 'it subtracts', 'line' => 0, 'type' => 'Failure', 'message' => 'was red'],
+        ['file' => 'tests/Unit/MathTest.php', 'class' => 'Tests\\Unit\\MathTest', 'name' => 'it divides', 'line' => 0, 'type' => 'Failure', 'message' => 'still red'],
+    ];
+
+    $section = BackendSection::from($this->junit, time() - 5, 0, 'pest', $earlier);
+
+    expect(array_column($section['failures'], 'name'))->toBe(['it divides'])
+        ->and($section['notes'])->toBe(['1 failure(s) below are from an earlier run: this run did not run those tests.']);
+});
+
+it('reports nothing once every earlier failure ran and passed', function (): void {
+    junitWith($this->junit, '<testcase name="it divides" class="Tests\Unit\MathTest" file="tests/Unit/MathTest.php::it divides"/>');
+
+    expect(BackendSection::from($this->junit, time() - 5, 0, 'pest', [
+        ['file' => 'tests/Unit/MathTest.php', 'class' => 'Tests\\Unit\\MathTest', 'name' => 'it divides', 'line' => 0, 'type' => 'Failure', 'message' => 'red'],
+    ]))->toBeNull();
+});
+
+it('says so when a failing run matched no test', function (): void {
+    file_put_contents($this->junit, '<?xml version="1.0"?><testsuites><testsuite name="" tests="0"/></testsuites>');
+
+    expect(BackendSection::from($this->junit, time() - 5, 1, 'pest')['notes'])
+        ->toBe(['Pest exited with code 1 and ran no test: the selection matched none.']);
 });

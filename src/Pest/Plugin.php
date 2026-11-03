@@ -125,15 +125,20 @@ final class Plugin implements AddsOutput, HandlesArguments
         }
 
         $root = TestSuite::getInstance()->rootPath;
-        $section = BackendSection::from($this->junitFile, $this->startedAt, $exitCode, $this->command);
         $report = $this->report($root);
+        $earlier = $report->section(FailureReport::BACKEND);
+
+        /** @var array<int, array{file: string, class: string, name: string, line: int, type: string, message: string}> $earlierFailures */
+        $earlierFailures = is_array($earlier['failures'] ?? null) ? $earlier['failures'] : [];
+        $earlierFailures = array_values(array_filter($earlierFailures, fn (array $failure): bool => is_file($this->absolute($root, $failure['file']))));
+        $section = BackendSection::from($this->junitFile, $this->startedAt, $exitCode, $this->command, $earlierFailures);
         $report->put(FailureReport::BACKEND, $section);
 
         if ($section === null) {
             return $exitCode;
         }
 
-        $this->output->writeln(['', sprintf('  <fg=red>Failure report:</> %s', $this->path('report_file', 'storage/logs/test-failures.md'))]);
+        $this->output->writeln(['', sprintf('  <fg=red>Failure report:</> %s', ToolkitConfig::path($this->config, 'report_file', 'storage/logs/test-failures.md'))]);
 
         /** @var array<int, array{file: string, class: string, name: string}> $failures */
         $failures = $section['failures'];
@@ -147,7 +152,7 @@ final class Plugin implements AddsOutput, HandlesArguments
         }
 
         $this->output->writeln('');
-        $this->notifier()->notify('Tests', sprintf('%d test(s) failed ✗', count($failures)), 'Basso');
+        $this->notifier()->notify('Tests', $failures === [] ? 'The run failed — check the report ✗' : sprintf('%d test(s) failed ✗', count($failures)), 'Basso');
 
         return $exitCode;
     }
@@ -199,7 +204,7 @@ final class Plugin implements AddsOutput, HandlesArguments
         }
 
         if ($this->junitFile === null) {
-            $this->junitFile = $this->absolute($root, $this->path('xml_file', 'storage/logs/test-results.xml'));
+            $this->junitFile = $this->absolute($root, ToolkitConfig::path($this->config, 'xml_file', 'storage/logs/test-results.xml'));
             $arguments[] = '--log-junit='.$this->junitFile;
         }
 
@@ -284,25 +289,14 @@ final class Plugin implements AddsOutput, HandlesArguments
     private function report(string $root): FailureReport
     {
         return new FailureReport(
-            $this->absolute($root, $this->path('json_file', 'storage/logs/test-failures.json')),
-            $this->absolute($root, $this->path('report_file', 'storage/logs/test-failures.md')),
+            $this->absolute($root, ToolkitConfig::path($this->config, 'json_file', 'storage/logs/test-failures.json')),
+            $this->absolute($root, ToolkitConfig::path($this->config, 'report_file', 'storage/logs/test-failures.md')),
         );
     }
 
     private function notifier(): Notifier
     {
-        $notifications = $this->config['notifications'] ?? null;
-        $enabled = (bool) (is_array($notifications) && is_array($notifications['desktop'] ?? null) ? ($notifications['desktop']['enabled'] ?? true) : true);
-
-        return new Notifier(new Factory, $enabled && getenv(self::PREFLIGHT_ENV) === false && ! AgentDetector::detect()->isAgent);
-    }
-
-    private function path(string $key, string $default): string
-    {
-        $paths = $this->config['paths'] ?? null;
-        $path = is_array($paths) ? ($paths[$key] ?? null) : null;
-
-        return is_string($path) && $path !== '' ? $path : $default;
+        return new Notifier(new Factory, ToolkitConfig::notificationsEnabled($this->config) && getenv(self::PREFLIGHT_ENV) === false && ! AgentDetector::detect()->isAgent);
     }
 
     private function absolute(string $root, string $path): string

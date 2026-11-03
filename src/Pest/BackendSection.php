@@ -14,33 +14,48 @@ use SimpleXMLElement;
 final class BackendSection
 {
     /**
-     * Null when the run passed: there is nothing to report.
+     * The section after this run: the failures it found, plus the earlier failures of
+     * tests it did not run, so a narrow re-run of one test keeps the others on record.
+     * Null when nothing is left to report.
      *
+     * @param  array<int, array{file: string, class: string, name: string, line: int, type: string, message: string}>  $earlier
      * @return array<string, mixed>|null
      */
-    public static function from(string $junitFile, int $startedAt, int $exitCode, string $command): ?array
+    public static function from(string $junitFile, int $startedAt, int $exitCode, string $command, array $earlier = []): ?array
     {
         clearstatcache(true, $junitFile);
         $written = is_file($junitFile) && (int) filemtime($junitFile) >= $startedAt;
         $xml = $written ? @simplexml_load_file($junitFile) : false;
 
         if (! $xml instanceof SimpleXMLElement) {
-            return $exitCode === 0 ? null : self::section($command, 0, [], [
+            if ($exitCode === 0) {
+                return $earlier === [] ? null : self::section($command, 0, $earlier, []);
+            }
+
+            return self::section($command, 0, $earlier, [
                 sprintf('Pest exited with code %d and wrote no test results: it stopped before the run ended (a fatal error, a crash, or a bootstrap failure). Read the terminal output above the summary.', $exitCode),
             ]);
         }
 
         $failures = [];
+        $ran = [];
         $total = 0;
-        self::collect($xml, $failures, $total);
+        self::collect($xml, $failures, $ran, $total);
 
-        if ($failures !== []) {
-            return self::section($command, $total, $failures, []);
+        $kept = array_values(array_filter($earlier, fn (array $failure): bool => ! isset($ran[$failure['class'].'::'.$failure['name']])));
+        $notes = $kept === [] ? [] : [sprintf('%d failure(s) below are from an earlier run: this run did not run those tests.', count($kept))];
+
+        if ($failures === [] && $exitCode !== 0) {
+            $notes[] = $total === 0
+                ? sprintf('Pest exited with code %d and ran no test: the selection matched none.', $exitCode)
+                : sprintf('Pest exited with code %d, but no test failed. Look for a risky test, a warning or a deprecation the configuration treats as a failure, in the terminal output.', $exitCode);
         }
 
-        return $exitCode === 0 ? null : self::section($command, $total, [], [
-            sprintf('Pest exited with code %d, but no test failed. Look for a risky test, a warning or a deprecation the configuration treats as a failure, in the terminal output.', $exitCode),
-        ]);
+        if ($failures === [] && $kept === [] && $exitCode === 0) {
+            return null;
+        }
+
+        return self::section($command, $total, [...$failures, ...$kept], $notes);
     }
 
     /**
@@ -55,11 +70,13 @@ final class BackendSection
 
     /**
      * @param  array<int, array{file: string, class: string, name: string, line: int, type: string, message: string}>  $failures
+     * @param  array<string, true>  $ran
      */
-    private static function collect(SimpleXMLElement $suite, array &$failures, int &$total): void
+    private static function collect(SimpleXMLElement $suite, array &$failures, array &$ran, int &$total): void
     {
         foreach ($suite->testcase as $testcase) {
             $total++;
+            $ran[$testcase['class'].'::'.$testcase['name']] = true;
             $failure = $testcase->failure->count() > 0 ? $testcase->failure : ($testcase->error->count() > 0 ? $testcase->error : null);
 
             if ($failure === null) {
@@ -82,7 +99,7 @@ final class BackendSection
         }
 
         foreach ($suite->testsuite as $nested) {
-            self::collect($nested, $failures, $total);
+            self::collect($nested, $failures, $ran, $total);
         }
     }
 

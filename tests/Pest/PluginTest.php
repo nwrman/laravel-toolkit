@@ -149,6 +149,27 @@ it('re-runs exactly one failed test with the command the report prints for it', 
         ->and(testsRun($this->project))->toBe(['Tests\\Unit\\MathTest::it subtracts']);
 });
 
+it('keeps the other failures on record after one failed test is re-run and passes', function (): void {
+    touch($this->project.'/fail');
+    runPest($this->project);
+    unlink($this->project.'/fail');
+
+    runPest($this->project, ['--filter=it subtracts$']);
+
+    expect(reportedFailures($this->project))->toBe([FAILED_IN_FIXTURE[1]]);
+});
+
+it('drops an earlier failure whose test file is gone', function (): void {
+    touch($this->project.'/fail');
+    runPest($this->project);
+    unlink($this->project.'/fail');
+    rename($this->project.'/tests/Unit/MathTest.php', $this->project.'/tests/Unit/ArithmeticTest.php');
+
+    runPest($this->project, ['--filter=it adds']);
+
+    expect(file_exists($this->project.'/storage/logs/test-failures.json'))->toBeFalse();
+});
+
 it('leaves the Browser suite out with --toolkit-no-browser', function (): void {
     runPest($this->project, ['--toolkit-no-browser']);
     $withoutBrowser = testsRun($this->project);

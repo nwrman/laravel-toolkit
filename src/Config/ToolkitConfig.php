@@ -64,6 +64,30 @@ final class ToolkitConfig
     }
 
     /**
+     * A path from `paths`, relative to the project root, or $default when unset.
+     *
+     * @param  array<string, mixed>  $config
+     */
+    public static function path(array $config, string $key, string $default): string
+    {
+        $paths = $config['paths'] ?? null;
+        $path = is_array($paths) ? ($paths[$key] ?? null) : null;
+
+        return is_string($path) && $path !== '' ? $path : $default;
+    }
+
+    /**
+     * @param  array<string, mixed>  $config
+     */
+    public static function notificationsEnabled(array $config): bool
+    {
+        $notifications = $config['notifications'] ?? null;
+        $desktop = is_array($notifications) ? ($notifications['desktop'] ?? null) : null;
+
+        return ! is_array($desktop) || (bool) ($desktop['enabled'] ?? true);
+    }
+
+    /**
      * @return array<string, mixed>
      */
     private static function read(string $file): array
