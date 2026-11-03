@@ -16,7 +16,9 @@ and the tests ran against the development database (2,570 failures in one Minuta
 - **A Pest plugin** (`extra.pest.plugins`) gives every Pest run the failure report, `vendor/bin/pest` included:
   `test-failures.md` / `.json` and the JUnit file, written when the run ends from the JUnit file Paratest merges, the
   coverage gate's run included. A crash or a failure with no failed test says so in the report instead of leaving it
-  stale. Each failure gets a command that re-runs exactly that test.
+  stale. Each failure gets a command that re-runs exactly that test. A narrow run (one test, a filter) replaces only
+  the entries of the tests it ran, so the other failures stay on record. A Pest process that a test starts (the
+  starter's guard test runs Pest itself) leaves the report and the JUnit file alone.
 - **`--toolkit-retry`** re-runs exactly the failed tests, by file and by a quoted, anchored class-and-name filter.
   The old `toolkit:retry` passed bare names with `addslashes`, so a name ran every test whose name contained it, and
   a `#` or `@` in a name turned into PHPUnit's data-set syntax.
@@ -29,7 +31,8 @@ and the tests ran against the development database (2,570 failures in one Minuta
 - **`vendor/bin/preflight`** replaces `php artisan toolkit:preflight`. It never boots Laravel: it reads
   `config/toolkit.php` as plain arrays (the provider's merge, shared) and `.env` only through `Dotenv::parse()` to
   resolve `env()` in that file, never into the environment. Gates inherit the shell's environment.
-  - **Fail-fast** (#13): the first failing gate stops the others, with every process they started.
+  - **Fail-fast** (#13): the first failing gate stops the others, with every process they started, all within one
+    grace period. Gates that wait for each other in a cycle fail instead of hanging.
   - **A separate `browser` gate**, after the coverage gate, without coverage or Xdebug, on 4 workers. Coverage comes
     from unit and feature tests. Gates take `after`.
   - **`--retry` and `--gate=` print every gate's row**; one this run skipped shows `passed, previous run`.
