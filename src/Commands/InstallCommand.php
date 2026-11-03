@@ -15,10 +15,10 @@ final class InstallCommand extends Command
     private const string PACKAGE_NAME = 'nwrman/laravel-toolkit';
 
     /**
-     * The guard runs from vendor/, so `composer update` keeps it current. Installs
-     * before this used a copy published to .claude/hooks/, frozen at install time.
+     * The retired test-command guard hook. Every Pest run now writes the report and
+     * uses TIA, so there is nothing left to steer agents away from.
      */
-    private const string GUARD_HOOK_COMMAND = 'php "$CLAUDE_PROJECT_DIR/vendor/nwrman/laravel-toolkit/bin/enforce-test-command.php"';
+    private const string GUARD_HOOK_SCRIPT = 'enforce-test-command.php';
 
     private const string LEGACY_GUARD_HOOK_PATH = '.claude/hooks/enforce-test-command.php';
 
@@ -30,8 +30,14 @@ final class InstallCommand extends Command
     private const string LEGACY_TEST_GUIDELINE_PATH = '.ai/guidelines/enforce-tests.blade.php';
 
     /**
-     * Non-routing recommended scripts. Test-routing scripts are built dynamically
-     * by {@see canonicalTestScripts()} so they can pick up `--env=testing`.
+     * Toolkit scripts from before v1: they ran an artisan parent, which loaded `.env`
+     * into the test run. A script still calling one is replaced or removed.
+     */
+    private const array RETIRED_COMMANDS = ['toolkit:report', 'toolkit:retry', 'toolkit:preflight'];
+
+    /**
+     * Non-test recommended scripts. The test scripts are built by
+     * {@see canonicalTestScripts()} from the app's TIA and frontend settings.
      *
      * @var array<string, string|array<int, string>>
      */
@@ -110,9 +116,7 @@ final class InstallCommand extends Command
             $this->warnAboutLegacyTestGuideline();
         }
 
-        if (confirm('Install Claude Code test-command guard hook?', true)) {
-            $this->mergeClaudeSettings();
-        }
+        $this->removeGuardHook();
 
         if (confirm('Publish GitHub Actions workflow?', true)) {
             $this->call('vendor:publish', [
@@ -286,6 +290,13 @@ final class InstallCommand extends Command
             }
         }
 
+        foreach ($scripts as $name => $command) {
+            if (! isset($this->canonicalTestScripts()[$name]) && $this->callsRetiredCommand($command)) {
+                unset($scripts[$name]);
+                $changed[] = $name.' (removed)';
+            }
+        }
+
         if ($changed === []) {
             $this->line('  <info>Test scripts already match the toolkit convention.</info>');
 
@@ -297,6 +308,16 @@ final class InstallCommand extends Command
         File::put($composerPath, is_string($encoded) ? $encoded."\n" : '');
 
         $this->line(sprintf('  <info>Standardized %d test script(s):</info> %s', count($changed), implode(', ', $changed)));
+        $this->line('  <comment>Frontend failures reach the report through the Vitest reporter: add</comment>');
+        $this->line("  <comment>'./vendor/nwrman/laravel-toolkit/resources/js/vitest-reporter.mjs' to test.reporters in vitest.config.</comment>");
+    }
+
+    private function callsRetiredCommand(mixed $command): bool
+    {
+        $commands = is_array($command) ? $command : [$command];
+
+        return array_any($commands, fn (mixed $line): bool => is_string($line)
+            && array_any(self::RETIRED_COMMANDS, fn (string $retired): bool => str_contains($line, $retired)));
     }
 
     /**
@@ -332,112 +353,82 @@ final class InstallCommand extends Command
     }
 
     /**
-     * The canonical test-routing scripts. Every suite runs through `toolkit:report`
-     * so failures land in the structured report. `--env=testing` is injected only
-     * when a committed `.env.testing` exists (see {@see warnIfTestDatabaseUnisolated()}).
+     * The canonical test scripts. None boots Laravel: each runs Pest (or the frontend
+     * runner) from the shell, so Pest loads `.env.testing` and the toolkit's Pest
+     * plugin writes the failure report. `composer test` and `test:retry` run both
+     * halves even when the first fails, so the report never mixes this run's backend
+     * with an older frontend run, and fail when either half does.
      *
      * @return array<string, string|array<int, string>>
      */
     private function canonicalTestScripts(): array
     {
-        $env = $this->hasEnvTesting() ? ' --env=testing' : '';
+        /** @var string $frontend */
+        $frontend = config('toolkit.frontend_test_command', 'bun run test:ui');
+        $xdebug = (bool) config('toolkit.tia.enabled', false) ? 'coverage' : 'off';
+        $timeout = 'Composer\\Config::disableProcessTimeout';
 
         return [
-            'test:unit' => ['Composer\\Config::disableProcessTimeout', '@php artisan toolkit:report'.$env.' --no-interaction --suite=unit'],
-            'test:feature' => ['Composer\\Config::disableProcessTimeout', '@php artisan toolkit:report'.$env.' --no-interaction --suite=feature'],
-            'test:browser' => ['Composer\\Config::disableProcessTimeout', '@php artisan toolkit:report'.$env.' --no-interaction --suite=browser'],
-            'test:frontend' => ['Composer\\Config::disableProcessTimeout', '@php artisan toolkit:report'.$env.' --no-interaction --suite=frontend'],
-            'test' => ['Composer\\Config::disableProcessTimeout', '@php artisan toolkit:report'.$env.' --no-interaction'],
-            'test:report' => ['Composer\\Config::disableProcessTimeout', '@php artisan toolkit:report'.$env],
-            'test:retry' => '@php artisan toolkit:retry'.$env,
-            'preflight' => ['Composer\\Config::disableProcessTimeout', '@php artisan toolkit:preflight'.$env],
+            'test' => [$timeout, sprintf('XDEBUG_MODE=%s pest --parallel; status=$?; %s || status=1; exit $status', $xdebug, $frontend)],
+            'test:unit' => [$timeout, 'XDEBUG_MODE=off pest --parallel --testsuite=Unit'],
+            'test:feature' => [$timeout, 'XDEBUG_MODE=off pest --parallel --testsuite=Feature'],
+            'test:browser' => [$timeout, 'XDEBUG_MODE=off pest --parallel --testsuite=Browser'],
+            'test:frontend' => [$timeout, $frontend],
+            'test:retry' => [$timeout, 'XDEBUG_MODE=off pest --parallel --toolkit-retry; status=$?; node vendor/nwrman/laravel-toolkit/resources/js/vitest-retry.mjs || status=1; exit $status'],
+            'preflight' => [$timeout, 'preflight'],
         ];
     }
 
     /**
-     * Add the Claude Code test-command guard hook to .claude/settings.json,
-     * creating the file when absent and skipping when already present.
+     * Removes the retired test-command guard hook from .claude/settings.json, leaving
+     * every other hook as it was.
      */
-    private function mergeClaudeSettings(): void
+    private function removeGuardHook(): void
     {
-        $settingsDir = base_path('.claude');
-        $settingsPath = $settingsDir.'/settings.json';
+        $settingsPath = base_path('.claude/settings.json');
+        $settings = File::exists($settingsPath) ? json_decode(File::get($settingsPath), true) : null;
+        $preToolUse = is_array($settings) ? data_get($settings, 'hooks.PreToolUse') : null;
 
-        File::ensureDirectoryExists($settingsDir);
-
-        $settings = [];
-
-        if (File::exists($settingsPath)) {
-            $decoded = json_decode(File::get($settingsPath), true);
-
-            if (is_array($decoded)) {
-                $settings = $decoded;
-            }
-        }
-
-        $preToolUse = data_get($settings, 'hooks.PreToolUse', []);
-
-        if (! is_array($preToolUse)) {
-            $preToolUse = [];
-        }
-
-        $found = false;
-        $migrated = false;
-
-        /** @var array<int, mixed> $preToolUse */
-        foreach ($preToolUse as $entryIndex => $entry) {
-            if (! is_array($entry)) {
-                continue;
-            }
-
-            /** @var array<int, mixed> $hooks */
-            $hooks = is_array($entry['hooks'] ?? null) ? $entry['hooks'] : [];
-
-            foreach ($hooks as $hookIndex => $hook) {
-                $command = is_array($hook) ? ($hook['command'] ?? null) : null;
-
-                if (! is_array($hook) || ! is_string($command) || ! str_contains($command, 'enforce-test-command.php')) {
-                    continue;
-                }
-
-                $found = true;
-
-                // An entry pointing at the old published copy keeps running that frozen
-                // copy forever. Repoint it at vendor/ so composer update reaches it.
-                if ($command !== self::GUARD_HOOK_COMMAND) {
-                    $hooks[$hookIndex] = [...$hook, 'command' => self::GUARD_HOOK_COMMAND];
-                    $migrated = true;
-                }
-            }
-
-            $entry['hooks'] = $hooks;
-            $preToolUse[$entryIndex] = $entry;
-        }
-
-        if ($found && ! $migrated) {
-            $this->line('  <info>Claude Code guard hook already present in .claude/settings.json.</info>');
+        if (! is_array($settings) || ! is_array($preToolUse)) {
             $this->warnAboutLegacyGuardHook();
 
             return;
         }
 
-        if (! $found) {
-            $preToolUse[] = [
-                'matcher' => 'Bash',
-                'hooks' => [
-                    ['type' => 'command', 'command' => self::GUARD_HOOK_COMMAND],
-                ],
-            ];
+        $removed = false;
+        $kept = [];
+
+        foreach ($preToolUse as $entry) {
+            if (! is_array($entry) || ! is_array($entry['hooks'] ?? null)) {
+                $kept[] = $entry;
+
+                continue;
+            }
+
+            $hooks = array_values(array_filter($entry['hooks'], function (mixed $hook): bool {
+                $command = is_array($hook) ? ($hook['command'] ?? null) : null;
+
+                return ! is_string($command) || ! str_contains($command, self::GUARD_HOOK_SCRIPT);
+            }));
+
+            if (count($hooks) === count($entry['hooks'])) {
+                $kept[] = $entry;
+
+                continue;
+            }
+
+            $removed = true;
+
+            if ($hooks !== []) {
+                $kept[] = [...$entry, 'hooks' => $hooks];
+            }
         }
 
-        data_set($settings, 'hooks.PreToolUse', $preToolUse);
-
-        // data_set() takes $settings by reference, so its type widens to mixed here.
-        File::put($settingsPath, $this->encodeTwoSpaceJson(is_array($settings) ? $settings : [])."\n");
-
-        $this->line($migrated
-            ? '  <info>Pointed the Claude Code guard hook in .claude/settings.json at vendor/, so composer update keeps it current.</info>'
-            : '  <info>Added Claude Code test-command guard hook to .claude/settings.json.</info>');
+        if ($removed) {
+            data_set($settings, 'hooks.PreToolUse', $kept);
+            File::put($settingsPath, $this->encodeTwoSpaceJson(is_array($settings) ? $settings : [])."\n");
+            $this->line('  <info>Removed the retired test-command guard hook from .claude/settings.json:</info> a raw Pest run now writes the report and uses TIA.');
+        }
 
         $this->warnAboutLegacyGuardHook();
     }
@@ -587,9 +578,9 @@ final class InstallCommand extends Command
 
     /**
      * Warn when tests would run against the dev database: a non-sqlite connection
-     * with neither a committed .env.testing nor force-pinned DB_* in phpunit.xml.
-     * The `composer test:*` scripts run `php artisan toolkit:report` (an artisan
-     * parent that loads .env), so the dev DB config can leak into the pest child.
+     * with neither a .env.testing nor force-pinned DB_* in phpunit.xml. Pest runs with
+     * APP_ENV=testing, so Laravel loads .env.testing, but falls back to .env when
+     * there is none.
      */
     private function warnIfTestDatabaseUnisolated(): void
     {
@@ -615,10 +606,10 @@ final class InstallCommand extends Command
 
         $this->newLine();
         $this->warn('⚠ Tests may run against your DEV database.');
-        $this->line("  DB_CONNECTION={$connection} in .env, but there's no committed .env.testing and no force-pinned");
-        $this->line('  DB_* in phpunit.xml. `composer test:*` runs `php artisan toolkit:report` (an artisan parent that');
-        $this->line('  loads .env), so the dev DB config can leak into the pest child. Fix one of:');
-        $this->line('    • Add a committed .env.testing with your test DB, then re-run this installer to wire --env=testing.');
+        $this->line("  DB_CONNECTION={$connection} in .env, but there's no .env.testing and no force-pinned DB_* in phpunit.xml.");
+        $this->line('  Pest runs with APP_ENV=testing, so Laravel looks for .env.testing, and without one it loads .env');
+        $this->line('  and its database. Fix one of:');
+        $this->line('    • Add a .env.testing that names your test database.');
         $this->line('    • Or force-pin the test DB in phpunit.xml, e.g. <env name="DB_DATABASE" value="..." force="true"/>.');
     }
 
