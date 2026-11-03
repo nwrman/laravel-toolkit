@@ -2,7 +2,51 @@
 
 All notable changes to `laravel-toolkit` will be documented in this file.
 
-## Unreleased
+## v1.0.0 — 2026-11-03
+
+### Test runner v1: nothing that runs tests boots Laravel (#19)
+
+Breaking. Folds in #13, #6 and starter #31.
+
+Every toolkit test command used to run under an artisan parent, which loads `.env`. Its `DB_DATABASE` reached Pest,
+and the tests ran against the development database (2,570 failures in one Minuta run, refused only by the starter's
+`_test` guard). No toolkit entry point that runs tests boots Laravel any more. Pest runs from the shell, where
+`phpunit.xml`'s `APP_ENV=testing` makes Laravel load `.env.testing`.
+
+- **A Pest plugin** (`extra.pest.plugins`) gives every Pest run the failure report, `vendor/bin/pest` included:
+  `test-failures.md` / `.json` and the JUnit file, written when the run ends from the JUnit file Paratest merges, the
+  coverage gate's run included. A crash or a failure with no failed test says so in the report instead of leaving it
+  stale. Each failure gets a command that re-runs exactly that test.
+- **`--toolkit-retry`** re-runs exactly the failed tests, by file and by a quoted, anchored class-and-name filter.
+  The old `toolkit:retry` passed bare names with `addslashes`, so a name ran every test whose name contained it, and
+  a `#` or `@` in a name turned into PHPUnit's data-set syntax.
+- **`--toolkit-no-browser`** leaves the Browser suite out of a run without making it a partial one, so TIA stays on
+  (`--exclude-testsuite` switches it off).
+- **The asset build check moved into the plugin.** It runs only when a browser spec could be selected, builds when
+  the assets are stale, and puts back `public/hot` when the build deletes it.
+- **A Vitest reporter** (`resources/js/vitest-reporter.mjs`) writes frontend failures into the same report, under
+  their own heading, and `resources/js/vitest-retry.mjs` re-runs only those.
+- **`vendor/bin/preflight`** replaces `php artisan toolkit:preflight`. It never boots Laravel: it reads
+  `config/toolkit.php` as plain arrays (the provider's merge, shared) and `.env` only through `Dotenv::parse()` to
+  resolve `env()` in that file, never into the environment. Gates inherit the shell's environment.
+  - **Fail-fast** (#13): the first failing gate stops the others, with every process they started.
+  - **A separate `browser` gate**, after the coverage gate, without coverage or Xdebug, on 4 workers. Coverage comes
+    from unit and feature tests. Gates take `after`.
+  - **`--retry` and `--gate=` print every gate's row**; one this run skipped shows `passed, previous run`.
+- **Fewer needless coverage re-records.** Pest writes its coverage cache only when the tests pass (its coverage
+  report runs on exit 0 only), so the stamp stays in place while the gate runs (an interrupted run leaves cache and
+  stamp as they were), a cache the run rewrote is stamped even when the gate then failed on the coverage minimum, and
+  it is stamped with the commit the run started on even if HEAD moved during it.
+- **Removed:** `toolkit:preflight`, `toolkit:report` and `toolkit:retry`; the test-command guard hook
+  (`bin/enforce-test-command.php`, #6): a raw Pest run now writes the report and uses TIA. `toolkit:install` removes
+  the hook from `.claude/settings.json`, never adds `--env=testing`, writes plain `pest` / Vitest test scripts, and
+  removes scripts that still call a removed command.
+- The "Running Tests" guideline and the `run-preflight` skill are rewritten for the new commands, with a line to cover
+  page props with `assertInertia` rather than a browser visit.
+
+**Upgrading an app:** `composer update nwrman/laravel-toolkit`, `php artisan toolkit:install` (standardize the test
+scripts), remove `--env=testing` from any script it does not own, add the Vitest reporter to `vitest.config`, and add
+feature tests for any lines only browser specs covered.
 
 ### A slow or flaky test is a finding, not a timeout to raise
 

@@ -1,6 +1,6 @@
 # Laravel Toolkit
 
-Reusable developer infrastructure for Laravel: parallel CI gates, test reporting with smart retry, deploy notifications, and project scaffolding.
+Reusable developer infrastructure for Laravel: a fail-fast parallel ship gate, a Pest plugin for failure reports and exact retries, deploy notifications, and project scaffolding.
 
 [![Latest Version on Packagist](https://img.shields.io/packagist/v/nwrman/laravel-toolkit.svg?style=flat-square)](https://packagist.org/packages/nwrman/laravel-toolkit)
 [![GitHub Tests Action Status](https://img.shields.io/github/actions/workflow/status/nwrman/laravel-toolkit/run-tests.yml?branch=main&label=tests&style=flat-square)](https://github.com/nwrman/laravel-toolkit/actions?query=workflow%3Arun-tests+branch%3Amain)
@@ -29,12 +29,13 @@ The installer walks you through:
 
 1. Moving `nwrman/laravel-toolkit` from `require` to `require-dev` in your `composer.json` (if needed)
 2. Publishing the config file (`config/toolkit.php`)
-3. Merging recommended composer scripts into your `composer.json`
+3. Merging recommended composer scripts into your `composer.json`, and standardizing the test scripts
 4. Publishing AI skills & guidelines (`.ai/`), and registering every skill found in `.ai/skills` with Laravel Boost (`boost.json`) so agents are actually told they exist
-5. Publishing a GitHub Actions CI workflow (`.github/workflows/tests.yml`)
-6. Publishing static analysis configs (`pint.json`, `phpstan.neon`)
-7. Publishing the deploy notification command into `app/Console/Commands/` (plus its Pest test)
-8. Publishing deployment scripts (`scripts/cloud-build.sh`, `cloud-deploy.sh`, `cloud-setup.sh`)
+5. Removing the retired test-command guard hook from `.claude/settings.json`, if present
+6. Publishing a GitHub Actions CI workflow (`.github/workflows/tests.yml`)
+7. Publishing static analysis configs (`pint.json`, `phpstan.neon`)
+8. Publishing the deploy notification command into `app/Console/Commands/` (plus its Pest test)
+9. Publishing deployment scripts (`scripts/cloud-build.sh`, `cloud-deploy.sh`, `cloud-setup.sh`)
 
 Each step is optional and skips files that already exist.
 
@@ -50,46 +51,89 @@ php artisan vendor:publish --tag=toolkit-commands --force
 
 ## Commands
 
+Nothing that runs tests boots Laravel. Pest runs from the shell, where `phpunit.xml`'s `APP_ENV=testing` makes Laravel
+load `.env.testing`, and no artisan parent puts `.env`'s database into the test run.
+
 | Command | Description |
 |---------|-------------|
-| `toolkit:preflight` | Run all CI quality gates in parallel |
-| `toolkit:report` | Run test suites and generate failure reports |
-| `toolkit:retry` | Re-run only previously failed tests |
-| `toolkit:tia` | Hand complete TIA baselines from landed branches to new ones |
-| `toolkit:install` | Interactive project setup wizard |
-| `starter:install-filament` | Install the canonical Filament admin panel into a consumer app |
+| `vendor/bin/pest` (any Pest run) | The toolkit's Pest plugin writes the failure report, and builds the frontend first when a Browser spec could run |
+| `vendor/bin/pest --toolkit-retry` | Re-run exactly the tests the failure report lists |
+| `vendor/bin/preflight` | Run every CI gate in parallel, stopping at the first failure |
+| `php artisan toolkit:tia` | Hand complete TIA baselines from landed branches to new ones |
+| `php artisan toolkit:install` | Interactive project setup wizard |
+| `php artisan starter:install-filament` | Install the canonical Filament admin panel into a consumer app |
 
 A `deploy:notify-telegram` command is also available for deploy pipelines, but it is published into your application (not registered by this package) — see [Published deploy notification command](#published-deploy-notification-command).
 
-### `toolkit:preflight`
+### The Pest plugin
 
-Runs all configured quality gates in parallel with a live spinner UI, summary table, and macOS desktop notifications.
+Registered through `extra.pest.plugins`, so every Pest run in the app gets it — `composer test`, a raw
+`vendor/bin/pest`, a preflight gate. In the parent process it:
 
-With TIA on, it refuses to run a coverage gate that passes a Pest selection flag (`--exclude-testsuite`, `--group`,
-`--filter`, …): Pest switches TIA off for such a run, so every preflight would re-run the whole suite and leave no
-baseline behind.
+- **writes the failure report when the run ends** (parallel runs too: it reads the JUnit file Paratest merges):
+  - `storage/logs/test-failures.md` — each failure's file, class, type and message, and a command that re-runs that
+    one test;
+  - `storage/logs/test-failures.json` — the same, structured; `--toolkit-retry` reads it;
+  - `storage/logs/test-results.xml` — the JUnit file (or the one you pass with `--log-junit`).
 
-```bash
-php artisan toolkit:preflight
+  A run that passes removes its section, and the files once no section is left. A run that crashed, or failed with no
+  failed test (a risky test, a deprecation the config treats as failure), says so in the report instead of leaving it
+  stale.
+- **`--toolkit-retry`** re-runs exactly the failed tests: their files, and a `--filter` of each test's class and
+  name, quoted and anchored, so `it logs in` never also runs `it logs in with a passkey`. That makes it a partial run,
+  so TIA is off for it. With nothing on record it runs nothing. Pest's own `--retry` is not the same: it runs
+  everything, failures first, and stops at the first failure.
+- **`--toolkit-no-browser`** leaves the Browser suite out (the suite named `Browser` in `phpunit.xml`) without making
+  the run a partial one, so TIA stays on. `--exclude-testsuite` would switch TIA off.
+- **builds the frontend** when a Browser spec could run (unless a `--testsuite` or explicit paths rule them out) and a
+  watched file is newer than the last build. The dev server's `public/hot` file is put back if the build deletes it.
+  `TOOLKIT_FORCE_BUILD=1` forces the build.
+
+The Vitest side is a reporter that writes the report's frontend section beside Pest's:
+
+```ts
+// vitest.config.ts
+test: { reporters: ['default', './vendor/nwrman/laravel-toolkit/resources/js/vitest-reporter.mjs'] }
 ```
 
+`node vendor/nwrman/laravel-toolkit/resources/js/vitest-retry.mjs` re-runs only the failed Vitest tests; `composer
+test:retry` runs it after the Pest retry.
+
+### `vendor/bin/preflight`
+
+The ship gate: every configured gate in parallel, with a live display, a summary table and macOS notifications. It
+never boots Laravel: it reads `config/toolkit.php` as plain arrays and `.env` only to resolve `env()` in that file, and
+gates inherit the shell's environment.
+
+- **Fail-fast.** When a gate fails, preflight stops every running gate with every process it started (Pest's workers,
+  browsers), and the gates still waiting do not start.
+- **`after`.** A gate with `'after' => 'pest-coverage'` starts once that gate passes. The default `browser` gate runs
+  Browser specs after the coverage gate, without coverage or Xdebug and on fewer workers; coverage comes from unit and
+  feature tests (`--toolkit-no-browser`).
+- **Every gate's row, every time.** `--retry` and `--gate=` print the full table; a gate this run did not run shows its
+  result from the last run that did (`✓ passed, previous run`).
+- **TIA.** With `toolkit.tia.enabled`, preflight lines the coverage cache up with the commit it matches before the
+  coverage gate, and stamps it after a run that rewrote it. It refuses a coverage gate that passes a Pest selection
+  flag (`--exclude-testsuite`, `--group`, `--filter`, …), which would switch TIA off.
+
 ```
-Running 4 gates in parallel...
+Running 5 gates...
 
-  ✓ Pest Coverage        (18.4s)
-  ✓ Frontend Coverage    (8.1s)
-  ✓ Lint                 (6.7s)
-  ✓ Types                (9.3s)
+  ✓ Lint                 (14.1s)
+  ✓ Frontend Coverage    (18.4s)
+  ✓ Types                (20.3s)
+  ✓ Pest Coverage        (61.0s)
+  ✓ Browser              (40.2s)
 
-+--------------------+--------+-------+
-| Gate               | Status | Time  |
-+--------------------+--------+-------+
-| Pest Coverage      | ✓ pass | 18.4s |
-| Frontend Coverage  | ✓ pass | 8.1s  |
-| Lint               | ✓ pass | 6.7s  |
-| Types              | ✓ pass | 9.3s  |
-+--------------------+--------+-------+
-Wall clock: 18.4s (saved 24.1s vs sequential)
++-------------------+----------+-------+
+| Gate              | Status   | Time  |
++-------------------+----------+-------+
+| Pest Coverage     | ✓ passed | 61.0s |
+| Browser           | ✓ passed | 40.2s |
+| Frontend Coverage | ✓ passed | 18.4s |
+| Lint              | ✓ passed | 14.1s |
+| Types             | ✓ passed | 20.3s |
++-------------------+----------+-------+
 
 ✓ All gates passed!
 ```
@@ -99,71 +143,21 @@ Wall clock: 18.4s (saved 24.1s vs sequential)
 | Option | Description |
 |--------|-------------|
 | `--gate=<name>` | Run specific gate(s). Repeatable: `--gate=lint --gate=types` |
-| `--retry` | Re-run only the gates that failed in the previous run |
-| `--force-build` | Force a frontend rebuild before running gates |
-| `--no-notify` | Suppress macOS desktop notification |
+| `--retry` | Run only the gates that did not pass last run (failed, stopped or not run) |
+| `--force-build` | Rebuild the frontend before Browser specs run |
+| `--no-notify` | Suppress the macOS desktop notification |
 
-**Retry workflow:** When gates fail, the command saves state to a JSON file. On the next run with `--retry`, only the failed gates are re-executed:
-
-```bash
-# Initial run — lint and types fail
-php artisan toolkit:preflight
-
-# Fix the issues, then retry only the failed gates
-php artisan toolkit:preflight --retry
-```
-
-**Agent detection:** When running inside a CI agent (Claude Code, Cursor, OpenCode, etc.), the command automatically suppresses desktop notifications and uses a plain-text output format instead of ANSI spinners. Detection is powered by [`shipfastlabs/agent-detector`](https://github.com/shipfastlabs/agent-detector).
-
-**Production safety:** `PreflightCommand` uses Laravel's `Prohibitable` trait and is automatically prohibited in production environments by the service provider.
-
-### `toolkit:report`
-
-Runs test suites (Pest + Vitest), parses JUnit XML results, and generates a Markdown failure report with individual test details and quick re-run commands.
-
-```bash
-php artisan toolkit:report
-```
-
-**Options:**
-
-| Option | Description |
-|--------|-------------|
-| `--suite=<list>` | Comma-separated suites to run: `unit,feature,browser,frontend` |
-| `--filter=<pattern>` | Only the backend tests matching this Pest filter. Selects the backend suites unless `--suite` says otherwise, and still runs the frontend build check first, so one browser spec never tests a stale bundle: `composer test -- --filter=GalleryTest` |
-| `--force-build` | Force a frontend rebuild before browser tests |
-| `--no-notify` | Suppress macOS desktop notification |
-
-When run interactively without `--suite`, it prompts you to select which suites to run using Laravel Prompts.
-
-**On failure**, two files are generated:
-
-- **Markdown report** (`storage/logs/test-failures.md`) — Human-readable with test names, file locations, error messages, and quick re-run commands
-- **JSON state** (`storage/logs/test-failures.json`) — Machine-readable, used by `toolkit:retry`
-
-**On success**, both files are cleaned up automatically.
-
-### `toolkit:retry`
-
-Re-runs only the tests that failed in the last `toolkit:report` run. Reads the JSON state file to determine which backend tests to filter and whether to re-run the frontend suite.
-
-```bash
-php artisan toolkit:retry
-```
-
-On success, the report and state files are cleaned up. On continued failure, they're preserved so you can iterate.
+**Agent detection:** inside an agent (Claude Code, Cursor, OpenCode, …) preflight skips notifications and prints each
+gate's result as a plain line instead of the live display. Detection is powered by
+[`laravel/agent-detector`](https://github.com/laravel/agent-detector).
 
 **Typical workflow:**
 
 ```bash
-# Run all tests with reporting
-composer test:report
-
-# Fix failures, then re-run only what failed
-composer test:retry
-
-# Iterate until clean, then run full preflight
-composer preflight
+composer test                      # what the change can reach (TIA), with the report
+composer test:retry                # after a failure: only what failed
+composer preflight                 # the ship gate, once
+vendor/bin/preflight --retry       # after a gate fails: only what did not pass
 ```
 
 ### `toolkit:tia`
@@ -301,7 +295,7 @@ php artisan vendor:publish --tag=toolkit-config
 
 ### Smart Merge
 
-You only need to override what you want to change. The service provider deep-merges your published config with the package defaults using `array_replace_recursive`. This means you can override a single gate's command without redeclaring all gates:
+You only need to override what you want to change. Gates merge per gate (`array_replace_recursive`), the same way in artisan and in `vendor/bin/preflight`, so you can override a single gate's command without redeclaring all gates. The file is read without booting Laravel: it can call `env()` (the shell's environment, then `.env`), but no helper that needs the application.
 
 ```php
 // config/toolkit.php — only override what you need
@@ -332,20 +326,21 @@ return [
 
 #### `gates`
 
-Each gate runs a shell command as part of preflight. Gates run in parallel.
+Each gate runs a shell command as part of preflight. Gates run in parallel; the first to fail stops the others.
 
 | Key | Type | Description |
 |-----|------|-------------|
 | `label` | `string` | Display name shown in the summary table |
 | `command` | `string` | Shell command to execute |
-| `env` | `array` | Optional environment variables (e.g., `['XDEBUG_MODE' => 'coverage']`) |
-| `requires_build` | `bool` | If `true`, ensures frontend is built before running this gate |
+| `env` | `array` | Optional environment variables (e.g., `['XDEBUG_MODE' => 'coverage']`), on top of the shell's |
+| `after` | `string` | Optional gate key: this gate starts once that gate passed, and does not run if it failed |
 
 **Default gates:**
 
 | Gate | Label | Default Command |
 |------|-------|----------------|
-| `pest-coverage` | Pest Coverage | `vendor/bin/pest --type-coverage --min=100 && vendor/bin/pest --parallel --coverage --exactly=100.0` |
+| `pest-coverage` | Pest Coverage | `vendor/bin/pest --type-coverage --min=100 && vendor/bin/pest --parallel --coverage --exactly=100.0 --toolkit-no-browser` (`XDEBUG_MODE=coverage`) |
+| `browser` | Browser | `vendor/bin/pest --testsuite=Browser --parallel --processes=4` (`XDEBUG_MODE=off`, after `pest-coverage`) |
 | `frontend-coverage` | Frontend Coverage | `bun run test:coverage` |
 | `lint` | Lint | `vendor/bin/pint --parallel --test && vendor/bin/rector --dry-run && bun run test:lint` |
 | `types` | Types | `vendor/bin/phpstan && bun run test:types` |
@@ -364,7 +359,7 @@ Desktop notifications use `terminal-notifier` when available, falling back to `a
 
 #### `build`
 
-Controls the frontend build check that runs before gates marked with `requires_build`.
+The build Browser specs render. The Pest plugin checks it before a run that could select a Browser spec.
 
 ```php
 'build' => [
@@ -373,10 +368,11 @@ Controls the frontend build check that runs before gates marked with `requires_b
     'stamp_file' => 'public/build/.buildstamp',    // Timestamp file for staleness check
     'manifest_file' => 'public/build/manifest.json', // Vite manifest
     'watch_paths' => 'resources/ vite.config.* tsconfig.* tailwind.config.* postcss.config.* package.json',
+    'hot_file' => 'public/hot',          // Put back if the build deletes it
 ],
 ```
 
-The build check uses `find ... -newer <stamp_file>` to detect source changes. If no changes are detected, the build is skipped.
+The build runs when a watched file is newer than the stamp file, or when `TOOLKIT_FORCE_BUILD=1` is set (`preflight --force-build` sets it for its gates).
 
 #### `paths`
 
@@ -392,22 +388,9 @@ File paths for state and reports, relative to the project root.
 ],
 ```
 
-#### `suites`
-
-Named test suites for `toolkit:report`. Keys are identifiers; values are display labels.
-
-```php
-'suites' => [
-    'unit' => 'Unit',
-    'feature' => 'Feature',
-    'browser' => 'Browser',
-    'frontend' => 'Frontend (Vitest)',
-],
-```
-
 #### `frontend_test_command`
 
-Command used to run frontend tests in `toolkit:report` and `toolkit:retry`.
+The frontend command `toolkit:install` writes into `composer test` and `composer test:frontend`.
 
 ```php
 'frontend_test_command' => 'bun run test:ui',
@@ -503,22 +486,26 @@ The `toolkit:install` command can merge these scripts into your `composer.json`:
 | `composer dev` | Concurrent queue worker + Pail + Vite dev server |
 | `composer lint` | Rector + Pint + frontend linting |
 | `composer lint:dirty` | Lint only files changed since last commit |
-| `composer test` | Run all test suites (unit, feature, browser, frontend); with TIA, only the affected backend tests |
+| `composer test` | `pest --parallel`, then the frontend tests; both always run. With TIA, only the backend tests a change can reach |
 | `composer test:unit` | Pest unit tests (parallel) |
 | `composer test:feature` | Pest feature tests (parallel) |
 | `composer test:browser` | Pest browser tests (parallel) |
+| `composer test:frontend` | The frontend tests |
 | `composer test:lint` | Pint + Rector + frontend lint (verification mode) |
 | `composer test:types` | PHPStan + frontend type checking |
 | `composer test:ci` | What CI runs, fastest gates first (lint, types, then coverage), TIA off — the "would CI pass?" check |
-| `composer test:report` | `toolkit:report` with timeout disabled |
-| `composer test:retry` | `toolkit:retry` |
-| `composer preflight` | `toolkit:preflight` with timeout disabled |
+| `composer test:retry` | Only the tests that failed: `pest --parallel --toolkit-retry`, then the Vitest retry |
+| `composer preflight` | `vendor/bin/preflight` with the timeout disabled |
 | `composer optimize` | Cache config, events, routes, and views |
 | `composer cloud:setup` | Provision the Cloud stack (create-only, re-runnable) |
 | `composer cloud:build` | Run cloud build script |
 | `composer cloud:deploy` | Run cloud deploy script |
 
-Scripts are added only if the key doesn't already exist in your `composer.json`.
+Scripts are added only if the key doesn't already exist in your `composer.json`. Standardizing the test scripts
+overwrites `test` and `test:*` with the ones above, and removes a script that still calls a pre-v1 artisan test
+command (`toolkit:report`, `toolkit:retry`, `toolkit:preflight`). It never adds `--env=testing`: nothing boots
+Laravel, so there is no `.env` to keep out. It also removes the retired test-command guard hook from
+`.claude/settings.json`.
 
 ## Testing
 
