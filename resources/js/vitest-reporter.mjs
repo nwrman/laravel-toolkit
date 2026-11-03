@@ -6,7 +6,8 @@
 //
 // Options (second tuple element): { jsonFile, reportFile }, relative to the project root.
 import { relative, resolve } from 'node:path';
-import { defaultPaths, escapeRegExp, putSection, shellQuote, timestamp } from './failure-report.mjs';
+import { existsSync } from 'node:fs';
+import { defaultPaths, escapeRegExp, putSection, readSections, shellQuote, timestamp } from './failure-report.mjs';
 
 export default class ToolkitFailureReporter {
   constructor(options = {}) {
@@ -19,10 +20,12 @@ export default class ToolkitFailureReporter {
   onTestRunEnd(testModules, unhandledErrors = [], reason = 'passed') {
     const root = process.cwd();
     const failures = [];
+    const ran = new Set();
     let total = 0;
 
     for (const module of testModules) {
       const file = relative(root, module.moduleId);
+      ran.add(`${file}\0(the file itself)`);
 
       for (const error of module.errors()) {
         failures.push({ file, name: '(the file itself)', message: describe(error) });
@@ -30,13 +33,20 @@ export default class ToolkitFailureReporter {
 
       for (const test of module.children.allTests()) {
         total++;
+        ran.add(`${file}\0${test.fullName}`);
         const result = test.result();
         if (result.state !== 'failed') continue;
         failures.push({ file, name: test.fullName, message: (result.errors ?? []).map(describe).join('\n\n') });
       }
     }
 
+    // A narrow re-run keeps the earlier failures of tests it did not run.
+    const earlier = readSections(this.paths.jsonFile).frontend?.failures ?? [];
+    const kept = earlier.filter((failure) => !ran.has(`${failure.file}\0${failure.name}`) && existsSync(resolve(root, failure.file)));
+    failures.push(...kept);
+
     const notes = unhandledErrors.map((error) => `Unhandled error outside any test: ${describe(error)}`);
+    if (kept.length > 0) notes.push(`${kept.length} failure(s) below are from an earlier run: this run did not run those tests.`);
     if (reason === 'interrupted') notes.push('The run was interrupted: these results are partial.');
 
     if (failures.length === 0 && notes.length === 0) {
@@ -57,7 +67,7 @@ function describe(error) {
 
 function section(failures, notes, total) {
   const command = `vitest ${process.argv.slice(2).join(' ')}`.trim();
-  let markdown = `## Frontend (Vitest)\n\n**Command:** \`${command}\` | **Ran:** ${timestamp()} | **Total:** ${total} | **Failed:** ${failures.length}\n\n`;
+  let markdown = `## Frontend (Vitest)\n\n**Command:** \`${command}\` | **Ran:** ${timestamp()} | **Tests run:** ${total} | **Failed:** ${failures.length}\n\n`;
 
   for (const note of notes) markdown += `> [!WARNING]\n> ${note.replace(/\n/g, '\n> ')}\n\n`;
 

@@ -111,7 +111,7 @@ final class BackendSection
     private static function section(string $command, int $total, array $failures, array $notes): array
     {
         $markdown = "## Backend (Pest)\n\n";
-        $markdown .= sprintf("**Command:** `%s` | **Ran:** %s | **Total:** %d | **Failed:** %d\n\n", $command, date('Y-m-d H:i:s'), $total, count($failures));
+        $markdown .= sprintf("**Command:** `%s` | **Ran:** %s | **Tests run:** %d | **Failed:** %d\n\n", $command, date('Y-m-d H:i:s'), $total, count($failures));
 
         foreach ($notes as $note) {
             $markdown .= "> [!WARNING]\n> {$note}\n\n";

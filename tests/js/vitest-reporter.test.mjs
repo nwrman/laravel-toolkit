@@ -67,3 +67,20 @@ test('prints a re-run command whose pattern matches only that test', () => {
   assert.equal(new RegExp(pattern).test('A > counts (1|2) again'), false);
   assert.equal(new RegExp(pattern).test('A > counts 1'), false);
 });
+
+test('keeps the earlier failures of tests a narrow re-run did not run', () => {
+  const root = project();
+  mkdirSync(join(root, 'resources/js'), { recursive: true });
+  writeFileSync(join(root, 'resources/js/a.test.ts'), '');
+  writeFileSync(join(root, 'resources/js/b.test.ts'), '');
+  new ToolkitFailureReporter().onTestRunEnd([
+    moduleWith(root, 'resources/js/a.test.ts', [['A > x', 'failed', 'a red']]),
+    moduleWith(root, 'resources/js/b.test.ts', [['B > y', 'failed', 'b red']]),
+  ]);
+
+  new ToolkitFailureReporter().onTestRunEnd([moduleWith(root, 'resources/js/a.test.ts', [['A > x', 'passed']])]);
+
+  const section = JSON.parse(readFileSync(join(root, 'storage/logs/test-failures.json'), 'utf8')).sections.frontend;
+  assert.deepEqual(section.failures, [{ file: 'resources/js/b.test.ts', name: 'B > y', message: 'b red' }]);
+  assert.deepEqual(section.notes, ['1 failure(s) below are from an earlier run: this run did not run those tests.']);
+});
