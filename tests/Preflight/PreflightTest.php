@@ -144,15 +144,54 @@ it('shows a stopped gate and the gate that waited for it as such', function (): 
     ]);
 });
 
-it('starts a gate that waits for another only once that one passed', function (int $exitCode, bool $starts): void {
+it('starts a gate that waits for another once that one passed', function (): void {
     fakeGates($this->process, [
-        'run pest-coverage' => $this->process->describe()->exitCode($exitCode)->iterations(2),
+        'run pest-coverage' => $this->process->describe()->iterations(2),
     ]);
 
     preflight($this, gatesConfig())->run(retry: false, only: [], forceBuild: false, notify: false);
 
-    $starts ? $this->process->assertRan('run browser') : $this->process->assertNotRan('run browser');
-})->with(['it passed' => [0, true], 'it failed' => [1, false]]);
+    $this->process->assertRan('run browser');
+});
+
+it('never starts a gate that waits for one that failed', function (): void {
+    fakeGates($this->process, [
+        'run pest-coverage' => $this->process->describe()->exitCode(1)->iterations(2),
+    ]);
+
+    preflight($this, gatesConfig())->run(retry: false, only: [], forceBuild: false, notify: false);
+
+    $this->process->assertNotRan('run browser');
+});
+
+it('fails instead of waiting forever on gates that wait for each other', function (): void {
+    fakeGates($this->process, []);
+
+    $exit = preflight($this, ['gates' => [
+        'a' => ['label' => 'A', 'command' => 'run a', 'after' => 'b'],
+        'b' => ['label' => 'B', 'command' => 'run b', 'after' => 'a'],
+        'lint' => ['label' => 'Lint', 'command' => 'run lint'],
+    ]])->run(retry: false, only: [], forceBuild: false, notify: false);
+
+    expect($exit)->toBe(1)
+        ->and(tableRows($this->output))->toBe([
+            ['A', '– not run'],
+            ['B', '– not run'],
+            ['Lint', '✓ passed'],
+        ]);
+    $this->process->assertNotRan('run a');
+});
+
+it('names a stopped gate by its label for an agent', function (): void {
+    fakeGates($this->process, [
+        'run lint' => $this->process->describe()->exitCode(1),
+        'run pest-coverage' => $this->process->describe()->iterations(3),
+    ]);
+
+    preflight($this, gatesConfig(), isAgent: true)->run(retry: false, only: [], forceBuild: false, notify: false);
+
+    expect($this->output->fetch())->toContain("  ■ Pest Coverage stopped\n");
+});
 
 it('retries only the gates that did not pass, and shows the others from the last run', function (): void {
     fakeGates($this->process, [

@@ -7,6 +7,7 @@ namespace Nwrman\LaravelToolkit\Preflight;
 use Illuminate\Contracts\Process\InvokedProcess;
 use Illuminate\Filesystem\Filesystem;
 use Illuminate\Process\Factory;
+use Nwrman\LaravelToolkit\Config\ToolkitConfig;
 use Nwrman\LaravelToolkit\Pest\Plugin;
 use Nwrman\LaravelToolkit\Support\Notifier;
 use Nwrman\LaravelToolkit\Tia\TiaBaselines;
@@ -67,7 +68,7 @@ final readonly class Preflight
     public function run(bool $retry, array $only, bool $forceBuild, bool $notify): int
     {
         $gates = $this->gates();
-        $state = new GateState($this->files, $this->path('preflight_state', 'storage/logs/preflight-result.json'));
+        $state = new GateState($this->files, ToolkitConfig::path($this->config, 'preflight_state', 'storage/logs/preflight-result.json'));
         $previous = $state->read();
 
         $selected = $this->select($gates, $previous, $retry, $only);
@@ -110,13 +111,13 @@ final readonly class Preflight
         $this->renderTable($gates, $results, $previous);
 
         $passed = array_all($results, fn (array $result): bool => $result['status'] === self::PASS);
-        $notifier = new Notifier($this->process, $notify && ! $this->isAgent && $this->notificationsEnabled());
+        $notifier = new Notifier($this->process, $notify && ! $this->isAgent && ToolkitConfig::notificationsEnabled($this->config));
 
         if (! $passed) {
             $this->output->writeln(['', 'Retry the gates that did not pass: <info>vendor/bin/preflight --retry</info>']);
 
-            if (is_file($this->root.DIRECTORY_SEPARATOR.$this->path('report_file', 'storage/logs/test-failures.md'))) {
-                $this->output->writeln(sprintf('Failed tests, with a command for each: <info>%s</info>', $this->path('report_file', 'storage/logs/test-failures.md')));
+            if (is_file($this->root.DIRECTORY_SEPARATOR.ToolkitConfig::path($this->config, 'report_file', 'storage/logs/test-failures.md'))) {
+                $this->output->writeln(sprintf('Failed tests, with a command for each: <info>%s</info>', ToolkitConfig::path($this->config, 'report_file', 'storage/logs/test-failures.md')));
             }
 
             $notifier->notify('Preflight', 'A gate failed ✗', 'Basso');
@@ -266,6 +267,17 @@ final readonly class Preflight
                 unset($pending[$index]);
             }
 
+            // Gates that wait on each other in a cycle can never start.
+            if ($running === [] && $pending !== []) {
+                $this->output->writeln(sprintf('<error>These gates wait for each other through `after`, so none can start: %s.</error>', implode(', ', $pending)));
+
+                foreach ($pending as $key) {
+                    $results[$key] = ['status' => self::NOT_RUN, 'duration' => 0.0, 'output' => ''];
+                }
+
+                $pending = [];
+            }
+
             foreach ($running as $key => $process) {
                 // Stopped by an earlier gate's failure in this same pass.
                 if (isset($results[$key]) || $process->running()) {
@@ -286,7 +298,7 @@ final readonly class Preflight
 
                 if (! $passed && ! $failed) {
                     $failed = true;
-                    $this->stopAll($running, $startedAt, $outputs, $results);
+                    $this->stopAll($running, $startedAt, $outputs, $results, array_map(fn (array $gate): string => $gate['label'], $gates));
                     $running = [];
                 }
             }
@@ -317,10 +329,12 @@ final readonly class Preflight
      * @param  array<string, float>  $startedAt
      * @param  array<string, string>  $outputs
      * @param  array<string, array{status: string, duration: float, output: string}>  $results
+     * @param  array<string, string>  $labels
      */
-    private function stopAll(array $running, array $startedAt, array $outputs, array &$results): void
+    private function stopAll(array $running, array $startedAt, array $outputs, array &$results, array $labels): void
     {
         foreach ($running as $key => $process) {
+            $label = $labels[$key] ?? $key;
             $pid = $process->id();
 
             if (is_int($pid)) {
@@ -335,7 +349,7 @@ final readonly class Preflight
             ];
 
             if ($this->isAgent) {
-                $this->output->writeln(sprintf('  ■ %s stopped', $key));
+                $this->output->writeln(sprintf('  ■ %s stopped', $label));
             }
         }
     }
@@ -537,21 +551,5 @@ final readonly class Preflight
         $tia = $this->config['tia'] ?? null;
 
         return is_array($tia) && (bool) ($tia['enabled'] ?? false);
-    }
-
-    private function notificationsEnabled(): bool
-    {
-        $notifications = $this->config['notifications'] ?? null;
-        $desktop = is_array($notifications) ? ($notifications['desktop'] ?? null) : null;
-
-        return ! is_array($desktop) || (bool) ($desktop['enabled'] ?? true);
-    }
-
-    private function path(string $key, string $default): string
-    {
-        $paths = $this->config['paths'] ?? null;
-        $path = is_array($paths) ? ($paths[$key] ?? null) : null;
-
-        return is_string($path) && $path !== '' ? $path : $default;
     }
 }

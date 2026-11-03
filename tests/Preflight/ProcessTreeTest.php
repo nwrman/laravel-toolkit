@@ -13,8 +13,7 @@ use Symfony\Component\Process\Process;
 it('stops a process and every process under it', function (): void {
     $gate = Process::fromShellCommandline('sh -c "sleep 30 & sleep 30 & wait" & wait');
     $gate->start();
-    usleep(300_000);
-    $descendants = descendantsOf((int) $gate->getPid());
+    $descendants = descendantsOnceStarted((int) $gate->getPid(), 3);
 
     new ProcessTree(new Factory)->terminate((int) $gate->getPid());
     waitFor($gate);
@@ -26,8 +25,7 @@ it('stops a process and every process under it', function (): void {
 it('kills a process that ignores the request to stop', function (): void {
     $gate = Process::fromShellCommandline('sh -c "trap \'\' TERM; while true; do sleep 1; done" & wait');
     $gate->start();
-    usleep(300_000);
-    $descendants = descendantsOf((int) $gate->getPid());
+    $descendants = descendantsOnceStarted((int) $gate->getPid(), 2);
 
     new ProcessTree(new Factory)->terminate((int) $gate->getPid());
     waitFor($gate);
@@ -53,6 +51,24 @@ function waitFor(Process $process): void
     while ($process->isRunning()) {
         usleep(50_000);
     }
+}
+
+/**
+ * The process tree under $pid once it has $count processes: the shells start their
+ * children asynchronously.
+ *
+ * @return array<int, int>
+ */
+function descendantsOnceStarted(int $pid, int $count): array
+{
+    $descendants = descendantsOf($pid);
+
+    while (count($descendants) < $count) {
+        usleep(20_000);
+        $descendants = descendantsOf($pid);
+    }
+
+    return $descendants;
 }
 
 /**
