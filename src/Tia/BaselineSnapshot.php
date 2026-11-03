@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Nwrman\LaravelToolkit\Tia;
 
-use Illuminate\Support\Facades\File;
+use Illuminate\Filesystem\Filesystem;
 
 /**
  * One branch's complete TIA baseline: Pest's graph with that branch's recorded
@@ -27,6 +27,7 @@ final readonly class BaselineSnapshot
      * @param  array<string, mixed>  $baseline
      */
     private function __construct(
+        private Filesystem $files,
         public string $directory,
         public string $sha,
         private array $graph,
@@ -37,15 +38,15 @@ final readonly class BaselineSnapshot
     /**
      * @throws UnusableBaseline
      */
-    public static function read(string $directory, string $branch): self
+    public static function read(Filesystem $files, string $directory, string $branch): self
     {
         $graphPath = $directory.DIRECTORY_SEPARATOR.self::GRAPH;
 
-        if (! File::isFile($graphPath)) {
+        if (! $files->isFile($graphPath)) {
             throw new UnusableBaseline('no TIA graph');
         }
 
-        $graph = json_decode(File::get($graphPath), true);
+        $graph = json_decode($files->get($graphPath), true);
 
         if (! is_array($graph) || ($graph['schema'] ?? null) !== 1) {
             throw new UnusableBaseline('a TIA graph this toolkit cannot read');
@@ -72,17 +73,17 @@ final readonly class BaselineSnapshot
             throw new UnusableBaseline(sprintf('the %s baseline is incomplete', $branch));
         }
 
-        if (! File::isFile($directory.DIRECTORY_SEPARATOR.self::COVERAGE)) {
+        if (! $files->isFile($directory.DIRECTORY_SEPARATOR.self::COVERAGE)) {
             throw new UnusableBaseline('no coverage cache (preflight would re-record everything)');
         }
 
-        $stamp = CoverageStamp::read($directory);
+        $stamp = CoverageStamp::read($files, $directory);
 
         if (! $stamp instanceof CoverageStamp) {
             throw new UnusableBaseline('no record of the commit its coverage cache matches (a cache no toolkit preflight wrote)');
         }
 
-        return new self($directory, $stamp->sha, $graph, [...$baseline, 'sha' => $stamp->sha, 'tree' => $stamp->tree], $stamp);
+        return new self($files, $directory, $stamp->sha, $graph, [...$baseline, 'sha' => $stamp->sha, 'tree' => $stamp->tree], $stamp);
     }
 
     /**
@@ -91,20 +92,20 @@ final readonly class BaselineSnapshot
      */
     public function writeTo(string $directory, string $branch, ?string $root = null): void
     {
-        File::ensureDirectoryExists($directory);
+        $this->files->ensureDirectoryExists($directory);
 
         $graph = [...$this->graph, 'baselines' => [$branch => $this->baseline]];
 
-        File::put($directory.DIRECTORY_SEPARATOR.self::GRAPH, (string) json_encode($graph, JSON_UNESCAPED_SLASHES));
-        File::copy($this->directory.DIRECTORY_SEPARATOR.self::COVERAGE, $directory.DIRECTORY_SEPARATOR.self::COVERAGE);
+        $this->files->put($directory.DIRECTORY_SEPARATOR.self::GRAPH, (string) json_encode($graph, JSON_UNESCAPED_SLASHES));
+        $this->files->copy($this->directory.DIRECTORY_SEPARATOR.self::COVERAGE, $directory.DIRECTORY_SEPARATOR.self::COVERAGE);
 
         $stamp = $this->stamp;
 
         if ($root !== null) {
-            CoverageCache::rebase($directory.DIRECTORY_SEPARATOR.self::COVERAGE, $stamp->root, $root);
+            CoverageCache::rebase($this->files, $directory.DIRECTORY_SEPARATOR.self::COVERAGE, $stamp->root, $root);
             $stamp = $stamp->withRoot($root);
         }
 
-        $stamp->writeTo($directory);
+        $stamp->writeTo($this->files, $directory);
     }
 }

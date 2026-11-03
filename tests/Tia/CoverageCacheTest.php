@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Illuminate\Filesystem\Filesystem;
 use Illuminate\Support\Facades\File;
 use Nwrman\LaravelToolkit\Tia\CoverageCache;
 use SebastianBergmann\CodeCoverage\CodeCoverage;
@@ -72,7 +73,7 @@ it('forgets changed files and keeps the rest', function (): void {
         '/repo/app/Kept.php' => [8 => ['t2']],
     ]);
 
-    expect(CoverageCache::forget($path, ['/repo/app/Changed.php', '/repo/app/New.php']))->toBe(1)
+    expect(CoverageCache::forget(new Filesystem, $path, ['/repo/app/Changed.php', '/repo/app/New.php']))->toBe(1)
         ->and(cachedLines($path))->toBe(['/repo/app/Kept.php' => [8 => ['t2']]]);
 
     File::delete($path);
@@ -82,7 +83,7 @@ it('reports a cache it cannot read', function (): void {
     $path = sys_get_temp_dir().'/coverage-'.uniqid().'.bin.gz';
     File::put($path, (string) gzencode(serialize(['not' => 'coverage'])));
 
-    expect(CoverageCache::forget($path, ['/repo/app/Changed.php']))->toBeNull();
+    expect(CoverageCache::forget(new Filesystem, $path, ['/repo/app/Changed.php']))->toBeNull();
 
     File::delete($path);
 });
