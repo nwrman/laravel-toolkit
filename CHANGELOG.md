@@ -2,6 +2,26 @@
 
 All notable changes to `laravel-toolkit` will be documented in this file.
 
+## v1.0.2 — Unreleased
+
+### Fixes found moving Minuta to v1 (Idealogo-dev/minuta-app#210)
+
+- **`--toolkit-retry` works under `--parallel` when the failures span several files.** The retry named one path per
+  failed file, and Paratest takes only one, so `composer test:retry` stopped with "Too many arguments" before any
+  test ran. It now names one path that holds every failed file: the file itself, or their closest common
+  directory. The anchored filter still picks the exact tests, and the asset build check reads the failed files, not
+  that directory.
+- **`composer test` leaves Browser specs out** (`--toolkit-no-browser`, so TIA stays on). Under Xdebug, beside every
+  other worker, they timed out whenever TIA replayed many of them: in Minuta a graph rebuild failed 100 browser specs
+  with `Timeout 5000ms exceeded`, while every unit and feature test passed. They run in `composer test:browser` and
+  in preflight's `browser` gate, without Xdebug and on fewer workers. **Upgrading:** answer yes to "Standardize
+  composer test:* scripts" in `toolkit:install`, or add `--toolkit-no-browser` to the Pest command in your `test`
+  script.
+
+### Development
+
+- The package's own suite runs on Pest 5 (`pestphp/pest-plugin-arch` now allows `^5.0`).
+
 ## v1.0.1 — 2026-11-04
 
 ### Fixes found moving the starter to v1 (nwrman/laravel-starter-kit#37)
