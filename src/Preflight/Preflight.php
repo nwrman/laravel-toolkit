@@ -125,6 +125,19 @@ final readonly class Preflight
             return 1;
         }
 
+        // A run of some gates passes when they do, but the others' last results stand.
+        $notPassed = array_values(array_filter(
+            array_keys($gates),
+            fn (string $key): bool => ($results[$key]['status'] ?? $previous[$key]['status'] ?? null) !== self::PASS,
+        ));
+
+        if ($notPassed !== []) {
+            $this->output->writeln(['', sprintf('<info>✓ %s passed.</info> <comment>Not passed yet: %s.</comment>', $this->labels($gates, array_keys($results)), $this->labels($gates, $notPassed))]);
+            $notifier->notify('Preflight', 'The selected gates passed ✓', 'Glass');
+
+            return 0;
+        }
+
         $this->output->writeln(['', '<info>✓ All gates passed!</info>']);
         $notifier->notify('Preflight', 'All gates passed! ✓', 'Glass');
 
@@ -441,6 +454,15 @@ final readonly class Preflight
 
         $this->output->writeln('');
         (new Table($this->output))->setHeaders(['Gate', 'Status', 'Time'])->setRows($rows)->render();
+    }
+
+    /**
+     * @param  array<string, array{label: string, command: string, env: array<string, string>, after: string|null}>  $gates
+     * @param  array<int, string>  $keys
+     */
+    private function labels(array $gates, array $keys): string
+    {
+        return implode(', ', array_map(fn (string $key): string => $gates[$key]['label'], $keys));
     }
 
     private function statusLabel(string $status, bool $previousRun): string

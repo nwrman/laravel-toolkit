@@ -233,6 +233,25 @@ it('shows a gate this run skipped with its result from the last run that ran it'
     $this->process->assertNotRan('run lint');
 });
 
+it('names the gates that have not passed when only some gates ran', function (): void {
+    fakeGates($this->process, ['run lint' => $this->process->describe()->exitCode(1)]);
+    $config = ['gates' => [
+        'lint' => ['label' => 'Lint', 'command' => 'run lint'],
+        'types' => ['label' => 'Types', 'command' => 'run types'],
+        'new' => ['label' => 'New', 'command' => 'run new'],
+    ]];
+    preflight($this, [...$config, 'gates' => array_slice($config['gates'], 0, 2)])->run(retry: false, only: [], forceBuild: false, notify: false);
+    $this->output->fetch();
+    $this->process = new Factory;
+    $this->process->fake();
+
+    $exit = preflight($this, $config)->run(retry: false, only: ['types'], forceBuild: false, notify: false);
+
+    expect($exit)->toBe(0)
+        ->and($this->output->fetch())->not->toContain('All gates passed')
+        ->toContain('✓ Types passed. Not passed yet: Lint, New.');
+});
+
 it('runs nothing on a retry after a run where every gate passed', function (): void {
     $this->process->fake();
     preflight($this, gatesConfig())->run(retry: false, only: [], forceBuild: false, notify: false);
