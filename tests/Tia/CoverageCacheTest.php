@@ -4,10 +4,9 @@ declare(strict_types=1);
 
 use Illuminate\Filesystem\Filesystem;
 use Illuminate\Support\Facades\File;
+use Nwrman\LaravelToolkit\Tests\Tia\FakeCoverageDriver;
 use Nwrman\LaravelToolkit\Tia\CoverageCache;
 use SebastianBergmann\CodeCoverage\CodeCoverage;
-use SebastianBergmann\CodeCoverage\Data\RawCodeCoverageData;
-use SebastianBergmann\CodeCoverage\Driver\Driver;
 use SebastianBergmann\CodeCoverage\Filter;
 
 it('moves paths under one checkout to another, keeping the data readable', function (): void {
@@ -39,20 +38,7 @@ it('leaves strings that only look like the old checkout alone', function (string
  */
 function coverageCacheFile(string $path, array $lines): void
 {
-    $coverage = new CodeCoverage(new class extends Driver
-    {
-        public function nameAndVersion(): string
-        {
-            return 'fake';
-        }
-
-        public function start(): void {}
-
-        public function stop(): RawCodeCoverageData
-        {
-            return RawCodeCoverageData::fromXdebugWithoutPathCoverage([]);
-        }
-    }, new Filter);
+    $coverage = new CodeCoverage(new FakeCoverageDriver, new Filter);
     $coverage->getData(true)->setLineCoverage($lines);
 
     File::put($path, (string) gzencode(serialize($coverage)));
