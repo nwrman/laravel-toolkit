@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 namespace Nwrman\LaravelToolkit\Tia;
 
+use Composer\InstalledVersions;
 use Illuminate\Filesystem\Filesystem;
 use Illuminate\Process\Factory;
+use Pest\Plugins\Tia\Fingerprint;
 
 /**
  * Hands complete TIA baselines from landed work to new work, so no checkout records
@@ -82,17 +84,35 @@ final readonly class TiaBaselines
      * replays every test the commits since can reach. A cache with no known commit, or
      * one outside the history, is deleted and the run records coverage afresh, and so
      * is one that counted Browser specs differently from the coming run ($withBrowser).
-     * Returns what it did, or null when the cache was already right.
+     *
+     * It also says when the run can't replay and will cover every test: Pest's graph is
+     * missing or out of date, or there is no coverage cache yet. On an out-of-date graph
+     * no commit is moved: Pest is about to set that graph aside.
+     * Returns what it did and why, or null when the cache was already right.
      */
     public function alignCoverage(string $root, bool $withBrowser = false): ?string
     {
         $directory = $this->cache->directory($root);
         $branch = $this->branch($root);
 
-        if ($directory === null || $branch === null || CoverageCache::modifiedAt($this->files, $directory) === null) {
+        if ($directory === null || $branch === null) {
             return null;
         }
 
+        $graphProblem = $this->graphProblem($root, $directory);
+        $graphNote = $graphProblem === null ? null : $this->fullRunNote($graphProblem);
+
+        if (CoverageCache::modifiedAt($this->files, $directory) === null) {
+            return $graphNote ?? 'TIA: no coverage cache yet: the coverage gate runs every test to record it, and the next one replays.';
+        }
+
+        $cacheNote = $this->alignCache($root, $directory, $branch, $withBrowser, rewind: $graphProblem === null);
+
+        return $graphNote === null ? $cacheNote : implode("\n", array_filter([$graphNote, $cacheNote]));
+    }
+
+    private function alignCache(string $root, string $directory, string $branch, bool $withBrowser, bool $rewind): ?string
+    {
         $stamp = CoverageStamp::read($this->files, $directory);
 
         if (! $stamp instanceof CoverageStamp || ! $this->isAncestor($root, $stamp->sha, 'HEAD')) {
@@ -122,7 +142,7 @@ final readonly class TiaBaselines
             $done[] = sprintf('moved the coverage cache\'s paths from %s', $stamp->root);
         }
 
-        if ($this->rewindGraph($directory, $branch, $stamp)) {
+        if ($rewind && $this->rewindGraph($directory, $branch, $stamp)) {
             $done[] = sprintf('replaying from %s, the commit the coverage cache matches', mb_substr($stamp->sha, 0, 7));
         }
 
@@ -141,6 +161,66 @@ final readonly class TiaBaselines
         }
 
         return $done === [] ? null : 'TIA: '.implode('; ', $done).'.';
+    }
+
+    /**
+     * Files Pest fingerprints its graph by, as its structural drift names them.
+     */
+    private const array FINGERPRINTED = [
+        'composer_lock' => 'composer.lock',
+        'phpunit_xml' => 'phpunit.xml',
+        'phpunit_xml_dist' => 'phpunit.xml.dist',
+        'vite_config' => 'the Vite config',
+        'package_lock' => 'the JavaScript lockfile',
+        'js_config' => 'the JavaScript config',
+    ];
+
+    /**
+     * Why Pest will run the next coverage gate without its graph, or null when the graph
+     * is usable (or this Pest can't say). Pest sets a graph aside when a fingerprinted
+     * file such as `composer.lock` changed since it was recorded.
+     */
+    private function graphProblem(string $root, string $directory): ?string
+    {
+        if (! class_exists(Fingerprint::class)) {
+            return null;
+        }
+
+        $path = $directory.DIRECTORY_SEPARATOR.BaselineSnapshot::GRAPH;
+        $graph = $this->files->isFile($path) ? json_decode($this->files->get($path), true) : null;
+
+        if (! is_array($graph)) {
+            return 'Pest has no graph for this checkout';
+        }
+
+        /** @var array<string, mixed> $stored */
+        $stored = is_array($graph['fingerprint'] ?? null) ? $graph['fingerprint'] : [];
+        $current = Fingerprint::compute($root);
+
+        if (Fingerprint::structuralMatches($stored, $current)) {
+            return null;
+        }
+
+        $changed = array_map(fn (string $key): string => self::FINGERPRINTED[$key] ?? $key, Fingerprint::structuralDrift($stored, $current));
+
+        return $changed === []
+            ? 'Pest\'s graph is from another TIA version'
+            : sprintf('%s changed since Pest recorded its graph', implode(' and ', $changed));
+    }
+
+    /**
+     * What a coverage gate does without a usable graph. Pest 5's coverage runs can't
+     * record a graph, and the plain run that does drops the coverage cache along with
+     * the old graph, so coverage replays only after a plain run and one full coverage
+     * run. Pest 4's coverage run records both at once.
+     */
+    private function fullRunNote(string $problem): string
+    {
+        $pest = InstalledVersions::isInstalled('pestphp/pest') ? InstalledVersions::getVersion('pestphp/pest') : null;
+
+        return $pest !== null && version_compare($pest, '5.0.0.0', '>=')
+            ? sprintf('TIA: %s, and a coverage run can\'t record a new one: the coverage gate runs every test. The next `composer test` records the graph, and the preflight after it records coverage once.', $problem)
+            : sprintf('TIA: %s: the coverage gate runs every test and records a new graph.', $problem);
     }
 
     /**

@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\Process;
 use Nwrman\LaravelToolkit\Tia\CoverageStamp;
 use Nwrman\LaravelToolkit\Tia\PestCache;
 use Nwrman\LaravelToolkit\Tia\TiaBaselines;
+use Pest\Plugins\Tia\Fingerprint;
 
 /**
  * A real repository: `main` with a bare `origin`, tickets in their own worktrees.
@@ -73,7 +74,7 @@ function recordRun(string $caches, string $checkout, string $branch, ?string $sh
     File::ensureDirectoryExists($cacheDir);
     File::put($cacheDir.'/graph.json', (string) json_encode([
         'schema' => 1,
-        'fingerprint' => ['structural' => 'abc'],
+        'fingerprint' => Fingerprint::compute($checkout),
         'files' => ['app/Example.php'],
         'edges' => ['tests/ExampleTest.php' => [0]],
         'baselines' => [$branch => $baseline],
@@ -108,6 +109,21 @@ function movePestCommit(string $cacheDir, string $branch, string $sha, array $tr
     $graph = json_decode(File::get($cacheDir.'/graph.json'), true);
     $graph['baselines'][$branch]['sha'] = $sha;
     $graph['baselines'][$branch]['tree'] = $tree;
+    File::put($cacheDir.'/graph.json', (string) json_encode($graph));
+}
+
+/**
+ * Gives the checkout's graph the fingerprint Pest computes for it now, changed by
+ * $drift, as a graph recorded before those files changed would hold.
+ *
+ * @param  array<string, string>  $drift
+ */
+function driftGraph(string $cacheDir, string $checkout, array $drift): void
+{
+    $graph = json_decode(File::get($cacheDir.'/graph.json'), true);
+    $fingerprint = Fingerprint::compute($checkout);
+    $fingerprint['structural'] = [...$fingerprint['structural'], ...$drift];
+    $graph['fingerprint'] = $fingerprint;
     File::put($cacheDir.'/graph.json', (string) json_encode($graph));
 }
 
@@ -246,6 +262,37 @@ it('replays from the coverage cache\'s commit after a plain run moved Pest\'s pa
         ->and(baselinesIn(cacheOf($this->caches, $t1))['feature/t1-one']['tree'])->toBe([])
         ->and(baselinesIn(cacheOf($this->caches, $t1))['feature/t1-one']['results'])->toHaveKey('tests/ExampleTest.php::it works')
         ->and($this->baselines->alignCoverage($t1))->toBeNull();
+});
+
+it('says a coverage gate on an out-of-date graph runs every test, and moves no commit in it', function (array $drift, string $problem): void {
+    $t1 = ticket($this->repo, 'feature/t1-one');
+    $covered = git($t1, 'rev-parse', 'HEAD');
+    recordRun($this->caches, $t1, 'feature/t1-one', $covered);
+    git($t1, 'commit', '--quiet', '--allow-empty', '-m', 'tested without coverage');
+    $moved = git($t1, 'rev-parse', 'HEAD');
+    movePestCommit(cacheOf($this->caches, $t1), 'feature/t1-one', $moved);
+    driftGraph(cacheOf($this->caches, $t1), $t1, $drift);
+
+    expect($this->baselines->alignCoverage($t1))->toBe(sprintf('TIA: %s, and a coverage run can\'t record a new one: the coverage gate runs every test. The next `composer test` records the graph, and the preflight after it records coverage once.', $problem))
+        ->and(baselinesIn(cacheOf($this->caches, $t1))['feature/t1-one']['sha'])->toBe($moved);
+})->with([
+    'composer.lock changed' => [['composer_lock' => 'older'], 'composer.lock changed since Pest recorded its graph'],
+    'two files changed' => [['composer_lock' => 'older', 'phpunit_xml' => 'older'], 'composer.lock and phpunit.xml changed since Pest recorded its graph'],
+]);
+
+it('says a coverage gate with no graph runs every test', function (): void {
+    $t1 = ticket($this->repo, 'feature/t1-one');
+    recordRun($this->caches, $t1, 'feature/t1-one', git($t1, 'rev-parse', 'HEAD'));
+    File::delete(cacheOf($this->caches, $t1).'/graph.json');
+
+    expect($this->baselines->alignCoverage($t1))->toStartWith('TIA: Pest has no graph for this checkout, and a coverage run can\'t record a new one: the coverage gate runs every test.');
+});
+
+it('says a coverage gate with a graph but no coverage cache records it in full', function (): void {
+    $t1 = ticket($this->repo, 'feature/t1-one');
+    recordRun($this->caches, $t1, 'feature/t1-one', git($t1, 'rev-parse', 'HEAD'), coverage: false);
+
+    expect($this->baselines->alignCoverage($t1))->toBe('TIA: no coverage cache yet: the coverage gate runs every test to record it, and the next one replays.');
 });
 
 it('gives a branch running on its base\'s baseline the coverage cache\'s commit', function (): void {
