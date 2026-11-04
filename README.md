@@ -89,11 +89,19 @@ Registered through `extra.pest.plugins`, so every Pest run in the app gets it â€
   watched file is newer than the last build. The dev server's `public/hot` file is put back if the build deletes it.
   `TOOLKIT_FORCE_BUILD=1` forces the build.
 
-The Vitest side is a reporter that writes the report's frontend section beside Pest's:
+The Vitest side is a reporter that writes the report's frontend section beside Pest's. Load it only where `vendor/`
+is installed: a CI job that runs Vitest without `composer install` (the workflow stub's Frontend Coverage job) would
+otherwise stop before any test runs, because Vitest exits when a reporter file is missing.
 
 ```ts
 // vitest.config.ts
-test: { reporters: ['default', './vendor/nwrman/laravel-toolkit/resources/js/vitest-reporter.mjs'] }
+import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
+
+const toolkitReporter = resolve(import.meta.dirname, 'vendor/nwrman/laravel-toolkit/resources/js/vitest-reporter.mjs');
+
+// inside defineConfig({ test: { ... } })
+reporters: existsSync(toolkitReporter) ? ['default', toolkitReporter] : ['default'],
 ```
 
 `node vendor/nwrman/laravel-toolkit/resources/js/vitest-retry.mjs` re-runs only the failed Vitest tests; `composer

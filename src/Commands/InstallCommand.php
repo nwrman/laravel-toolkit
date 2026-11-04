@@ -309,7 +309,8 @@ final class InstallCommand extends Command
 
         $this->line(sprintf('  <info>Standardized %d test script(s):</info> %s', count($changed), implode(', ', $changed)));
         $this->line('  <comment>Frontend failures reach the report through the Vitest reporter: add</comment>');
-        $this->line("  <comment>'./vendor/nwrman/laravel-toolkit/resources/js/vitest-reporter.mjs' to test.reporters in vitest.config.</comment>");
+        $this->line("  <comment>'./vendor/nwrman/laravel-toolkit/resources/js/vitest-reporter.mjs' to test.reporters in vitest.config,</comment>");
+        $this->line('  <comment>only when that file exists: a CI job without composer install would stop Vitest (see the README).</comment>');
     }
 
     private function callsRetiredCommand(mixed $command): bool
