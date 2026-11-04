@@ -2,6 +2,30 @@
 
 All notable changes to `laravel-toolkit` will be documented in this file.
 
+## v1.0.3 — Unreleased
+
+### Fixes found moving the software factory to v1 (#22)
+
+- **An unattended upgrade publishes no optional files.** `toolkit:install --no-interaction` answered every prompt
+  yes, so an app with no deploys or CI got the Telegram deploy command, the deploy scripts and the GitHub workflow.
+  With `config/toolkit.php` already in place, those prompts and the static-analysis one default to no.
+- **The `phpstan.neon` stub ships.** `.gitignore`'s unanchored `phpstan.neon` also ignored `stubs/phpstan.neon`, so
+  `toolkit:install` printed `Can't locate path`. The stub is the starter kit's.
+- **`--gate=` no longer says "All gates passed!" beside gates that have not.** A run of some gates names the others
+  that have not passed: `✓ Types passed. Not passed yet: Lint, Browser.` The exit code stays 0.
+- **The report drops failures of tests that no longer exist.** A run that selects whole files drops an earlier failure
+  whose file it ran without that test (a renamed or deleted test); a retry drops one it targeted and did not run. A
+  filter, another selection flag, `--bail`, a `--stop-on-*` option or `--shard` keeps them.
+- **No false 100% from a v0 coverage cache.** v0's coverage gate counted Browser specs' hits. The coverage stamp now
+  records whether its run did, and preflight records coverage afresh when that doesn't match the gate.
+- **Preflight records Pest's graph when it has none.** Pest 5 drops its TIA graph whenever `composer.lock` (or
+  `phpunit.xml`, the Vite config, the JS lockfile) changes, and a coverage run can't record one, so every preflight
+  after an upgrade or a `composer update` ran the whole suite. Preflight now runs `tia.record_command` (default
+  `vendor/bin/pest --parallel --toolkit-no-browser`) at the start of the coverage gate when the graph is missing or
+  stale; the coverage run then replays from it.
+
+**Upgrading:** nothing to do. The first preflight after the upgrade records coverage and the graph afresh, once.
+
 ## v1.0.2 — 2026-11-04
 
 ### Fixes found moving Minuta to v1 (Idealogo-dev/minuta-app#210)
