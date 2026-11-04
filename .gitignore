@@ -26,9 +26,9 @@ _ide_helper_models.php
 .DS_Store
 
 # Misc
-phpunit.xml
-phpstan.neon
-testbench.yaml
+/phpunit.xml
+/phpstan.neon
+/testbench.yaml
 /docs
 /coverage
 

@@ -95,6 +95,13 @@ it('publishes all three cloud scripts under the toolkit-scripts tag', function (
     }
 });
 
+it('ships every file it publishes', function (): void {
+    $sources = array_keys(ServiceProvider::$publishes[LaravelToolkitServiceProvider::class] ?? []);
+
+    expect($sources)->not->toBeEmpty()
+        ->and(array_values(array_filter($sources, fn (string $source): bool => ! file_exists($source))))->toBe([]);
+});
+
 it('ships the provisioning skill so it can be published and registered', function (): void {
     expect(is_file(__DIR__.'/../stubs/ai/skills/provision-laravel-cloud/SKILL.md'))->toBeTrue();
 });
