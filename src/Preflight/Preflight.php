@@ -41,7 +41,7 @@ final readonly class Preflight
      * Pest's partial-selection flags (`Pest\Plugins\Tia::PARTIAL_SELECTION_FLAGS`).
      * Any one of them makes Pest switch TIA off for the run.
      */
-    private const array PARTIAL_SELECTION_FLAGS = [
+    public const array PARTIAL_SELECTION_FLAGS = [
         '--filter', '--exclude-filter', '--group', '--exclude-group',
         '--covers', '--uses', '--testsuite', '--exclude-testsuite', '--test-suffix',
         '--dirty', '--todo', '--todos', '--flaky', '--notes',

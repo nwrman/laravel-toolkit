@@ -13,15 +13,26 @@ use SimpleXMLElement;
  */
 final class BackendSection
 {
+    /** The run selected every test of the files it ran: a test missing from them is gone. */
+    public const string WHOLE_FILES = 'whole_files';
+
+    /** A retry: its filter named every earlier failure, so one it did not run is gone. */
+    public const string RETRY = 'retry';
+
+    /** A filter or another selection flag: a test it did not run may still exist. */
+    public const string NARROWED = 'narrowed';
+
     /**
      * The section after this run: the failures it found, plus the earlier failures of
      * tests it did not run, so a narrow re-run of one test keeps the others on record.
-     * Null when nothing is left to report.
+     * An earlier failure the run would have run, had its test still existed, is dropped:
+     * a renamed or deleted test. Null when nothing is left to report.
      *
      * @param  array<int, array{file: string, class: string, name: string, line: int, type: string, message: string}>  $earlier
+     * @param  self::WHOLE_FILES|self::RETRY|self::NARROWED  $selection
      * @return array<string, mixed>|null
      */
-    public static function from(string $junitFile, int $startedAt, int $exitCode, string $command, array $earlier = []): ?array
+    public static function from(string $junitFile, int $startedAt, int $exitCode, string $command, array $earlier = [], string $selection = self::NARROWED): ?array
     {
         clearstatcache(true, $junitFile);
         $written = is_file($junitFile) && (int) filemtime($junitFile) >= $startedAt;
@@ -39,10 +50,16 @@ final class BackendSection
 
         $failures = [];
         $ran = [];
+        $filesRan = [];
         $total = 0;
-        self::collect($xml, $failures, $ran, $total);
+        self::collect($xml, $failures, $ran, $filesRan, $total);
 
-        $kept = array_values(array_filter($earlier, fn (array $failure): bool => ! isset($ran[$failure['class'].'::'.$failure['name']])));
+        $kept = array_values(array_filter($earlier, fn (array $failure): bool => ! isset($ran[$failure['class'].'::'.$failure['name']])
+            && match ($selection) {
+                self::RETRY => false,
+                self::WHOLE_FILES => ! isset($filesRan[$failure['file']]),
+                default => true,
+            }));
         $notes = $kept === [] ? [] : [sprintf('%d failure(s) below are from an earlier run: this run did not run those tests.', count($kept))];
 
         if ($failures === [] && $exitCode !== 0) {
@@ -71,12 +88,14 @@ final class BackendSection
     /**
      * @param  array<int, array{file: string, class: string, name: string, line: int, type: string, message: string}>  $failures
      * @param  array<string, true>  $ran
+     * @param  array<string, true>  $filesRan
      */
-    private static function collect(SimpleXMLElement $suite, array &$failures, array &$ran, int &$total): void
+    private static function collect(SimpleXMLElement $suite, array &$failures, array &$ran, array &$filesRan, int &$total): void
     {
         foreach ($suite->testcase as $testcase) {
             $total++;
             $ran[$testcase['class'].'::'.$testcase['name']] = true;
+            $filesRan[explode('::', (string) $testcase['file'], 2)[0]] = true;
             $failure = $testcase->failure->count() > 0 ? $testcase->failure : ($testcase->error->count() > 0 ? $testcase->error : null);
 
             if ($failure === null) {
@@ -99,7 +118,7 @@ final class BackendSection
         }
 
         foreach ($suite->testsuite as $nested) {
-            self::collect($nested, $failures, $ran, $total);
+            self::collect($nested, $failures, $ran, $filesRan, $total);
         }
     }
 
