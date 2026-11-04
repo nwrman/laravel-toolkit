@@ -2,6 +2,20 @@
 
 All notable changes to `laravel-toolkit` will be documented in this file.
 
+## v1.0.5 — 2026-11-04
+
+### Fixes found checking v1.0.4 on Minuta
+
+- **Preflight says when the coverage gate will run every test.** A gate without a usable graph, or without a coverage
+  cache, ran in full with no `TIA:` line. It now prints one: Pest's graph is missing or out of date (naming the files
+  that changed), or there is no coverage cache yet.
+- **No "replaying from" on an out-of-date graph.** Preflight moved Pest's commit inside a graph Pest was about to set
+  aside, and said it was replaying when the run covered every test.
+- **The guideline states the cost of a lock change.** On Pest 5, coverage replays again only after two full runs:
+  `composer test` records the graph, and its drift handling drops the coverage cache with the old graph; the next
+  preflight records coverage. A preflight before that `composer test` also runs in full, and its coverage is thrown
+  away. Minuta measured the sequence: 225s, 148s, 183s, then 18.5s.
+
 ## v1.0.4 — 2026-11-04
 
 ### Fixes (#26)
