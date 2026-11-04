@@ -182,6 +182,13 @@ jobs:
         with:
           name: build-output
 
+      # The toolkit's Pest plugin rebuilds the assets before Browser specs unless
+      # public/build/.buildstamp is newer than every watched source. Only the toolkit's
+      # own build writes that stamp, and this job has no `vp` to rebuild with. The
+      # artifact is this commit's build, so stamp it as current.
+      - name: Stamp Build Artifact
+        run: touch public/build/.buildstamp
+
       - name: Get Playwright Version
         id: playwright-version
         run: echo "version=$(bun pm ls 2>/dev/null | grep playwright | head -1 | sed 's/.*@//')" >> $GITHUB_OUTPUT
