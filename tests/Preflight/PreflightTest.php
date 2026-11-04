@@ -339,7 +339,7 @@ it('keeps and stamps the coverage a gate saved when it failed only after its tes
 
     expect($exit)->toBe(1)
         ->and(gzdecode((string) file_get_contents($this->cache.'/coverage.bin.gz')))->toBe('fresh')
-        ->and(CoverageStamp::read(new Filesystem, $this->cache))->toEqual(new CoverageStamp($this->root, $sha, []));
+        ->and(CoverageStamp::read(new Filesystem, $this->cache))->toEqual(new CoverageStamp($this->root, $sha, [], withBrowser: true));
 });
 
 it('lines the coverage cache up before a TIA coverage gate runs', function (): void {
@@ -355,6 +355,25 @@ it('lines the coverage cache up before a TIA coverage gate runs', function (): v
     expect($this->output->fetch())->toContain('TIA: no record of the commit the coverage cache matches. Recording coverage afresh.')
         ->toContain('✓ All gates passed!');
 });
+
+it('records coverage afresh when the cache counted Browser specs differently from the coverage gate', function (?bool $cachedWithBrowser, string $flag, string $message): void {
+    $sha = repositoryAt($this->root);
+    mkdir($this->cache);
+    file_put_contents($this->cache.'/coverage.bin.gz', (string) gzencode('recorded before'));
+    // A v0 stamp has no browser field.
+    file_put_contents($this->cache.'/'.CoverageStamp::FILE, (string) json_encode(['root' => $this->root, 'sha' => $sha, 'tree' => (object) [], ...($cachedWithBrowser === null ? [] : ['browser' => $cachedWithBrowser])]));
+
+    preflight($this, ['tia' => ['enabled' => true], 'gates' => ['pest-coverage' => [
+        'label' => 'Pest Coverage',
+        'command' => sprintf('test ! -e %s/coverage.bin.gz && echo pest --coverage%s', $this->cache, $flag),
+    ]]])->run(retry: false, only: [], forceBuild: false, notify: false);
+
+    expect($this->output->fetch())->toContain($message)
+        ->toContain('✓ All gates passed!');
+})->with([
+    'a v0 cache, a gate without Browser specs' => [null, ' --toolkit-no-browser', 'TIA: the coverage cache counts Browser specs, and this gate leaves them out.'],
+    'a cache without them, a gate that runs them' => [false, '', 'TIA: the coverage cache leaves Browser specs out, and this gate runs them.'],
+]);
 
 it('prints each gate\'s result as it finishes for an agent, which has no live display', function (): void {
     fakeGates($this->process, ['run lint' => $this->process->describe()->exitCode(1)]);

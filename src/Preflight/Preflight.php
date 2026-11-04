@@ -92,14 +92,17 @@ final readonly class Preflight
         $this->output->writeln(sprintf('<info>Running %d gate%s...</info>', $count, $count === 1 ? '' : 's'));
         $this->output->writeln('');
 
-        $replaysCoverage = $this->tiaEnabled() && array_any($selected, fn (string $key): bool => $this->pestCoverageRuns($gates[$key]['command']) !== []);
-        $aligned = $replaysCoverage ? $this->tia->alignCoverage($this->root) : null;
+        $coverageRuns = array_merge(...array_map(fn (string $key): array => $this->pestCoverageRuns($gates[$key]['command']), $selected));
+        $replaysCoverage = $this->tiaEnabled() && $coverageRuns !== [];
+        // Whether the coverage run counts Browser specs' hits, which the cache must match.
+        $withBrowser = array_any($coverageRuns, fn (array $tokens): bool => ! in_array(Plugin::NO_BROWSER_OPTION, $tokens, true));
+        $aligned = $replaysCoverage ? $this->tia->alignCoverage($this->root, $withBrowser) : null;
 
         if ($aligned !== null) {
             $this->output->writeln([$aligned, '']);
         }
 
-        $coverageRun = $replaysCoverage ? $this->tia->startCoverageRun($this->root) : null;
+        $coverageRun = $replaysCoverage ? $this->tia->startCoverageRun($this->root, $withBrowser) : null;
         $results = $this->runGates($gates, $selected, $forceBuild);
 
         if ($coverageRun !== null) {

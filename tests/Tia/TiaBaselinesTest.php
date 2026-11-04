@@ -284,6 +284,35 @@ it('deletes a coverage cache it cannot place, so the run records coverage afresh
     'a commit outside the branch' => [true, 'TIA: the coverage cache is from %s, outside this branch\'s history. Recording coverage afresh.'],
 ]);
 
+it('deletes a coverage cache recorded with Browser specs before a gate that leaves them out', function (): void {
+    $t1 = ticket($this->repo, 'feature/t1-one');
+    $sha = git($t1, 'rev-parse', 'HEAD');
+    recordRun($this->caches, $t1, 'feature/t1-one', $sha, stamp: false);
+    // A v0 stamp: v0's coverage gate ran every suite, and its stamp has no browser field.
+    File::put(cacheOf($this->caches, $t1).'/'.CoverageStamp::FILE, (string) json_encode(['root' => $t1, 'sha' => $sha, 'tree' => (object) []]));
+
+    expect($this->baselines->alignCoverage($t1, withBrowser: false))->toBe('TIA: the coverage cache counts Browser specs, and this gate leaves them out. Recording coverage afresh.')
+        ->and(File::exists(cacheOf($this->caches, $t1).'/coverage.bin.gz'))->toBeFalse()
+        ->and(File::exists(cacheOf($this->caches, $t1).'/'.CoverageStamp::FILE))->toBeFalse();
+});
+
+it('deletes a coverage cache recorded without Browser specs before a gate that runs them', function (): void {
+    $t1 = ticket($this->repo, 'feature/t1-one');
+    recordRun($this->caches, $t1, 'feature/t1-one', git($t1, 'rev-parse', 'HEAD'));
+
+    expect($this->baselines->alignCoverage($t1, withBrowser: true))->toBe('TIA: the coverage cache leaves Browser specs out, and this gate runs them. Recording coverage afresh.')
+        ->and(File::exists(cacheOf($this->caches, $t1).'/coverage.bin.gz'))->toBeFalse();
+});
+
+it('stamps whether the coverage run included Browser specs', function (bool $withBrowser): void {
+    $t1 = ticket($this->repo, 'feature/t1-one');
+    $run = $this->baselines->startCoverageRun($t1, $withBrowser);
+    rewriteCoverage(cacheOf($this->caches, $t1));
+    $this->baselines->finishCoverageRun($run);
+
+    expect(CoverageStamp::read(new Filesystem, cacheOf($this->caches, $t1))?->withBrowser)->toBe($withBrowser);
+})->with(['with' => true, 'without' => false]);
+
 /**
  * What Pest leaves when a coverage run finishes: a coverage cache written just now.
  */

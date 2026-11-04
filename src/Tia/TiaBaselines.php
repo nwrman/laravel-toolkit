@@ -80,10 +80,11 @@ final readonly class TiaBaselines
      * A cache from another checkout has its paths moved here. A cache whose commit is
      * known and in this branch's history gets Pest's commit moved back to it, so the run
      * replays every test the commits since can reach. A cache with no known commit, or
-     * one outside the history, is deleted and the run records coverage afresh.
+     * one outside the history, is deleted and the run records coverage afresh, and so
+     * is one that counted Browser specs differently from the coming run ($withBrowser).
      * Returns what it did, or null when the cache was already right.
      */
-    public function alignCoverage(string $root): ?string
+    public function alignCoverage(string $root, bool $withBrowser = false): ?string
     {
         $directory = $this->cache->directory($root);
         $branch = $this->branch($root);
@@ -101,6 +102,15 @@ final readonly class TiaBaselines
             return $stamp instanceof CoverageStamp
                 ? sprintf('TIA: the coverage cache is from %s, outside this branch\'s history. Recording coverage afresh.', mb_substr($stamp->sha, 0, 7))
                 : 'TIA: no record of the commit the coverage cache matches. Recording coverage afresh.';
+        }
+
+        if ($stamp->withBrowser !== $withBrowser) {
+            $this->files->delete($directory.DIRECTORY_SEPARATOR.CoverageCache::FILE);
+            $this->files->delete($directory.DIRECTORY_SEPARATOR.CoverageStamp::FILE);
+
+            return $stamp->withBrowser
+                ? 'TIA: the coverage cache counts Browser specs, and this gate leaves them out. Recording coverage afresh.'
+                : 'TIA: the coverage cache leaves Browser specs out, and this gate runs them. Recording coverage afresh.';
         }
 
         $done = [];
@@ -143,7 +153,7 @@ final readonly class TiaBaselines
      * interrupted, stopped by another gate's failure or fails a test leaves the cache
      * as it was, and the stamp still matches it.
      */
-    public function startCoverageRun(string $root): ?CoverageRun
+    public function startCoverageRun(string $root, bool $withBrowser = false): ?CoverageRun
     {
         $directory = $this->cache->directory($root);
         $sha = $this->git($root, ['rev-parse', 'HEAD']);
@@ -156,7 +166,7 @@ final readonly class TiaBaselines
         $untracked = (string) $this->git($root, ['ls-files', '--others', '--exclude-standard']);
         $dirty = preg_split('/\R/', mb_trim($changed."\n".$untracked), -1, PREG_SPLIT_NO_EMPTY) ?: [];
 
-        return new CoverageRun($directory, new CoverageStamp($this->realRoot($root), $sha, array_fill_keys($dirty, '')), time());
+        return new CoverageRun($directory, new CoverageStamp($this->realRoot($root), $sha, array_fill_keys($dirty, ''), $withBrowser), time());
     }
 
     /**
