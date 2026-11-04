@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 namespace Nwrman\LaravelToolkit\Tia;
 
+use Composer\InstalledVersions;
 use Illuminate\Filesystem\Filesystem;
 use Illuminate\Process\Factory;
+use Pest\Plugins\Tia\Fingerprint;
 
 /**
  * Hands complete TIA baselines from landed work to new work, so no checkout records
@@ -72,6 +74,58 @@ final readonly class TiaBaselines
         $snapshot->writeTo($directory, $branch, $this->realRoot($root));
 
         return sprintf('Inherited the %s TIA baseline at %s.', $base, mb_substr($snapshot->sha, 0, 7));
+    }
+
+    /**
+     * Files Pest fingerprints its graph by, as its structural drift names them.
+     */
+    private const array FINGERPRINTED = [
+        'composer_lock' => 'composer.lock',
+        'phpunit_xml' => 'phpunit.xml',
+        'phpunit_xml_dist' => 'phpunit.xml.dist',
+        'vite_config' => 'the Vite config',
+        'package_lock' => 'the JavaScript lockfile',
+        'js_config' => 'the JavaScript config',
+    ];
+
+    /**
+     * Why Pest would run the next coverage gate without a graph, or null when it has a
+     * usable one, or when this Pest's coverage runs record a graph themselves.
+     *
+     * Pest 5 discards its graph when a fingerprinted file such as `composer.lock`
+     * changes, and a coverage run never records one: it runs the whole suite and says
+     * to record with a plain run first. Every preflight after a `composer update`
+     * would then run everything until someone ran a plain `composer test`.
+     */
+    public function graphProblem(string $root): ?string
+    {
+        $pest = InstalledVersions::isInstalled('pestphp/pest') ? InstalledVersions::getVersion('pestphp/pest') : null;
+
+        if ($pest === null || version_compare($pest, '5.0.0.0', '<') || ! class_exists(Fingerprint::class)) {
+            return null;
+        }
+
+        $directory = $this->cache->directory($root);
+        $path = $directory === null ? null : $directory.DIRECTORY_SEPARATOR.BaselineSnapshot::GRAPH;
+        $graph = $path !== null && $this->files->isFile($path) ? json_decode($this->files->get($path), true) : null;
+
+        if (! is_array($graph)) {
+            return 'Pest has no graph for this checkout';
+        }
+
+        /** @var array<string, mixed> $stored */
+        $stored = is_array($graph['fingerprint'] ?? null) ? $graph['fingerprint'] : [];
+        $current = Fingerprint::compute($root);
+
+        if (Fingerprint::structuralMatches($stored, $current)) {
+            return null;
+        }
+
+        $changed = array_map(fn (string $key): string => self::FINGERPRINTED[$key] ?? $key, Fingerprint::structuralDrift($stored, $current));
+
+        return $changed === []
+            ? 'Pest\'s graph is from another TIA version'
+            : sprintf('%s changed since Pest recorded its graph', implode(' and ', $changed));
     }
 
     /**

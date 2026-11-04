@@ -138,6 +138,11 @@ return [
 
     'tia' => [
         'enabled' => env('TOOLKIT_TIA', false),
+
+        // Records Pest's graph when it has none, before the coverage gate. Pest 5 drops
+        // the graph when composer.lock or another fingerprinted file changes, and a
+        // coverage run can't record one, so the gate would run the whole suite.
+        'record_command' => 'vendor/bin/pest --parallel --toolkit-no-browser',
     ],
 
 ];
