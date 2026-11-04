@@ -20,7 +20,6 @@ it('runs the install command and publishes config', function (): void {
         ->expectsConfirmation('Merge recommended composer scripts?', 'no')
         ->expectsConfirmation('Standardize composer test:* scripts to the toolkit convention (overwrites existing test:* / test)?', 'no')
         ->expectsConfirmation('Publish AI skills & guidelines?', 'no')
-        ->expectsConfirmation('Install Claude Code test-command guard hook?', 'no')
         ->expectsConfirmation('Publish GitHub Actions workflow?', 'no')
         ->expectsConfirmation('Publish static analysis configs (pint.json, phpstan.neon)?', 'no')
         ->expectsConfirmation('Publish deploy notification command (and test)?', 'no')
@@ -48,7 +47,6 @@ it('merges composer scripts into composer.json', function (): void {
             ->expectsConfirmation('Merge recommended composer scripts?', 'yes')
             ->expectsConfirmation('Standardize composer test:* scripts to the toolkit convention (overwrites existing test:* / test)?', 'no')
             ->expectsConfirmation('Publish AI skills & guidelines?', 'no')
-            ->expectsConfirmation('Install Claude Code test-command guard hook?', 'no')
             ->expectsConfirmation('Publish GitHub Actions workflow?', 'no')
             ->expectsConfirmation('Publish static analysis configs (pint.json, phpstan.neon)?', 'no')
             ->expectsConfirmation('Publish deploy notification command (and test)?', 'no')
@@ -62,7 +60,6 @@ it('merges composer scripts into composer.json', function (): void {
 
         // New scripts should be added
         expect($result['scripts'])->toHaveKey('preflight')
-            ->toHaveKey('test:report')
             ->toHaveKey('test:retry')
             ->toHaveKey('test:unit')
             ->toHaveKey('test:frontend')
@@ -121,7 +118,6 @@ it('skips existing scripts and reports them', function (): void {
             ->expectsConfirmation('Merge recommended composer scripts?', 'yes')
             ->expectsConfirmation('Standardize composer test:* scripts to the toolkit convention (overwrites existing test:* / test)?', 'no')
             ->expectsConfirmation('Publish AI skills & guidelines?', 'no')
-            ->expectsConfirmation('Install Claude Code test-command guard hook?', 'no')
             ->expectsConfirmation('Publish GitHub Actions workflow?', 'no')
             ->expectsConfirmation('Publish static analysis configs (pint.json, phpstan.neon)?', 'no')
             ->expectsConfirmation('Publish deploy notification command (and test)?', 'no')
@@ -142,184 +138,153 @@ it('skips existing scripts and reports them', function (): void {
     }
 });
 
-it('standardizes drifted test scripts to the toolkit convention when confirmed', function (): void {
+/**
+ * Runs the installer saying yes only to standardizing the test scripts, and returns
+ * the scripts it left in composer.json.
+ *
+ * @param  array<string, mixed>  $scripts
+ * @return array<string, mixed>
+ */
+function standardizedScripts(array $scripts): array
+{
     $composerPath = base_path('composer.json');
     $originalContent = File::exists($composerPath) ? File::get($composerPath) : null;
-
-    $composerData = [
-        'name' => 'test/project',
-        'scripts' => [
-            // Raw pest invocation that bypasses the toolkit's reporting.
-            'test:unit' => 'pest --testsuite=Unit --parallel --compact',
-            'test' => ['@test:unit', 'bun run test:ui'],
-        ],
-    ];
-    File::put($composerPath, json_encode($composerData, JSON_PRETTY_PRINT));
+    File::put($composerPath, (string) json_encode(['name' => 'test/project', 'scripts' => $scripts], JSON_PRETTY_PRINT));
 
     try {
-        $this->artisan('toolkit:install')
+        test()->artisan('toolkit:install')
             ->expectsConfirmation('Move nwrman/laravel-toolkit to require-dev?', 'no')
             ->expectsConfirmation('Merge recommended composer scripts?', 'no')
             ->expectsConfirmation('Standardize composer test:* scripts to the toolkit convention (overwrites existing test:* / test)?', 'yes')
             ->expectsConfirmation('Publish AI skills & guidelines?', 'no')
-            ->expectsConfirmation('Install Claude Code test-command guard hook?', 'no')
             ->expectsConfirmation('Publish GitHub Actions workflow?', 'no')
             ->expectsConfirmation('Publish static analysis configs (pint.json, phpstan.neon)?', 'no')
             ->expectsConfirmation('Publish deploy notification command (and test)?', 'no')
             ->expectsConfirmation('Publish deployment scripts?', 'no')
             ->assertExitCode(0);
 
+        /** @var array{scripts: array<string, mixed>} $result */
         $result = json_decode(File::get($composerPath), true);
 
-        expect($result['scripts']['test:unit'])->toBe([
-            'Composer\\Config::disableProcessTimeout',
-            '@php artisan toolkit:report --no-interaction --suite=unit',
-        ]);
-        expect($result['scripts']['test'])->toBe([
-            'Composer\\Config::disableProcessTimeout',
-            '@php artisan toolkit:report --no-interaction',
-        ]);
-        // No committed .env.testing here, so no --env=testing is injected.
-        expect($result['scripts']['test:unit'][1])->not->toContain('--env=testing');
+        return $result['scripts'];
     } finally {
-        if ($originalContent !== null) {
-            File::put($composerPath, $originalContent);
-        } else {
-            File::delete($composerPath);
-        }
+        $originalContent !== null ? File::put($composerPath, $originalContent) : File::delete($composerPath);
     }
+}
+
+it('standardizes the test scripts to plain Pest and Vitest runs, with no artisan parent', function (): void {
+    $scripts = standardizedScripts([
+        'test:unit' => 'pest --testsuite=Unit --parallel --compact',
+        'test' => ['Composer\\Config::disableProcessTimeout', '@php artisan toolkit:report --env=testing --no-interaction'],
+        'test:report' => ['Composer\\Config::disableProcessTimeout', '@php artisan toolkit:report --env=testing'],
+        'test:fast' => 'XDEBUG_MODE=coverage pest --parallel',
+    ]);
+
+    $timeout = 'Composer\\Config::disableProcessTimeout';
+
+    expect($scripts)->toBe([
+        'test:unit' => [$timeout, 'XDEBUG_MODE=off pest --parallel --testsuite=Unit'],
+        'test' => [$timeout, 'XDEBUG_MODE=off pest --parallel; status=$?; bun run test:ui || status=1; exit $status'],
+        'test:fast' => 'XDEBUG_MODE=coverage pest --parallel',
+        'test:feature' => [$timeout, 'XDEBUG_MODE=off pest --parallel --testsuite=Feature'],
+        'test:browser' => [$timeout, 'XDEBUG_MODE=off pest --parallel --testsuite=Browser'],
+        'test:frontend' => [$timeout, 'bun run test:ui'],
+        'test:retry' => [$timeout, 'XDEBUG_MODE=off pest --parallel --toolkit-retry; status=$?; node vendor/nwrman/laravel-toolkit/resources/js/vitest-retry.mjs || status=1; exit $status'],
+        'preflight' => [$timeout, 'preflight'],
+    ]);
 });
 
-it('injects --env=testing into test scripts when a committed .env.testing exists', function (): void {
-    $composerPath = base_path('composer.json');
-    $envTestingPath = base_path('.env.testing');
-    $originalContent = File::exists($composerPath) ? File::get($composerPath) : null;
+it('runs composer test with a coverage driver when TIA is on, so TIA can record', function (): void {
+    config(['toolkit.tia.enabled' => true]);
 
-    File::put($composerPath, json_encode(['name' => 'test/project', 'scripts' => []], JSON_PRETTY_PRINT));
+    expect(standardizedScripts([])['test'][1])
+        ->toBe('XDEBUG_MODE=coverage pest --parallel; status=$?; bun run test:ui || status=1; exit $status');
+});
+
+it('writes the app\'s frontend command into composer test and test:frontend', function (): void {
+    config(['toolkit.frontend_test_command' => 'npm run test:unit']);
+
+    $scripts = standardizedScripts([]);
+
+    expect($scripts['test'][1])->toBe('XDEBUG_MODE=off pest --parallel; status=$?; npm run test:unit || status=1; exit $status')
+        ->and($scripts['test:frontend'][1])->toBe('npm run test:unit');
+});
+
+it('never adds --env=testing, even when a .env.testing exists', function (): void {
+    $envTestingPath = base_path('.env.testing');
     File::put($envTestingPath, "APP_ENV=testing\nDB_CONNECTION=pgsql\n");
 
     try {
-        $this->artisan('toolkit:install')
-            ->expectsConfirmation('Move nwrman/laravel-toolkit to require-dev?', 'no')
-            ->expectsConfirmation('Merge recommended composer scripts?', 'no')
-            ->expectsConfirmation('Standardize composer test:* scripts to the toolkit convention (overwrites existing test:* / test)?', 'yes')
-            ->expectsConfirmation('Publish AI skills & guidelines?', 'no')
-            ->expectsConfirmation('Install Claude Code test-command guard hook?', 'no')
-            ->expectsConfirmation('Publish GitHub Actions workflow?', 'no')
-            ->expectsConfirmation('Publish static analysis configs (pint.json, phpstan.neon)?', 'no')
-            ->expectsConfirmation('Publish deploy notification command (and test)?', 'no')
-            ->expectsConfirmation('Publish deployment scripts?', 'no')
-            ->assertExitCode(0);
-
-        $result = json_decode(File::get($composerPath), true);
-
-        expect($result['scripts']['test:unit'][1])
-            ->toBe('@php artisan toolkit:report --env=testing --no-interaction --suite=unit');
-        expect($result['scripts']['test:report'][1])->toBe('@php artisan toolkit:report --env=testing');
-        expect($result['scripts']['test:retry'])->toBe('@php artisan toolkit:retry --env=testing');
+        $scripts = standardizedScripts([]);
     } finally {
         File::delete($envTestingPath);
-
-        if ($originalContent !== null) {
-            File::put($composerPath, $originalContent);
-        } else {
-            File::delete($composerPath);
-        }
     }
+
+    expect(json_encode($scripts))->not->toContain('--env');
 });
 
-it('writes .claude/settings.json with two-space indentation', function (): void {
-    $claudeDir = base_path('.claude');
-
-    try {
-        $this->artisan('toolkit:install')
-            ->expectsConfirmation('Move nwrman/laravel-toolkit to require-dev?', 'no')
-            ->expectsConfirmation('Merge recommended composer scripts?', 'no')
-            ->expectsConfirmation('Standardize composer test:* scripts to the toolkit convention (overwrites existing test:* / test)?', 'no')
-            ->expectsConfirmation('Publish AI skills & guidelines?', 'no')
-            ->expectsConfirmation('Install Claude Code test-command guard hook?', 'yes')
-            ->expectsConfirmation('Publish GitHub Actions workflow?', 'no')
-            ->expectsConfirmation('Publish static analysis configs (pint.json, phpstan.neon)?', 'no')
-            ->expectsConfirmation('Publish deploy notification command (and test)?', 'no')
-            ->expectsConfirmation('Publish deployment scripts?', 'no')
-            ->assertExitCode(0);
-
-        $contents = File::get($claudeDir.'/settings.json');
-
-        // Four-space indentation is what JSON_PRETTY_PRINT emits, and it fails the
-        // JS formatter the consumer app runs in `bun run build`.
-        expect($contents)->toContain("\n  \"hooks\"")
-            ->and($contents)->not->toContain("\n    \"hooks\"");
-    } finally {
-        File::deleteDirectory($claudeDir);
-    }
+it('keeps a test script that does not call a retired toolkit command', function (): void {
+    expect(standardizedScripts(['test:report' => 'pest --testsuite=Unit'])['test:report'])->toBe('pest --testsuite=Unit');
 });
 
-it('wires the guard hook from vendor/ into .claude/settings.json without publishing a copy', function (): void {
-    $claudeDir = base_path('.claude');
+/**
+ * Runs the installer saying no to every prompt.
+ */
+function installWithEveryPromptDeclined(): PendingCommand
+{
+    return test()->artisan('toolkit:install')
+        ->expectsConfirmation('Move nwrman/laravel-toolkit to require-dev?', 'no')
+        ->expectsConfirmation('Merge recommended composer scripts?', 'no')
+        ->expectsConfirmation('Standardize composer test:* scripts to the toolkit convention (overwrites existing test:* / test)?', 'no')
+        ->expectsConfirmation('Publish AI skills & guidelines?', 'no')
+        ->expectsConfirmation('Publish GitHub Actions workflow?', 'no')
+        ->expectsConfirmation('Publish static analysis configs (pint.json, phpstan.neon)?', 'no')
+        ->expectsConfirmation('Publish deploy notification command (and test)?', 'no')
+        ->expectsConfirmation('Publish deployment scripts?', 'no');
+}
 
-    try {
-        $this->artisan('toolkit:install')
-            ->expectsConfirmation('Move nwrman/laravel-toolkit to require-dev?', 'no')
-            ->expectsConfirmation('Merge recommended composer scripts?', 'no')
-            ->expectsConfirmation('Standardize composer test:* scripts to the toolkit convention (overwrites existing test:* / test)?', 'no')
-            ->expectsConfirmation('Publish AI skills & guidelines?', 'no')
-            ->expectsConfirmation('Install Claude Code test-command guard hook?', 'yes')
-            ->expectsConfirmation('Publish GitHub Actions workflow?', 'no')
-            ->expectsConfirmation('Publish static analysis configs (pint.json, phpstan.neon)?', 'no')
-            ->expectsConfirmation('Publish deploy notification command (and test)?', 'no')
-            ->expectsConfirmation('Publish deployment scripts?', 'no')
-            ->assertExitCode(0);
-
-        expect(File::exists($claudeDir.'/hooks/enforce-test-command.php'))->toBeFalse();
-
-        $settings = json_decode(File::get($claudeDir.'/settings.json'), true);
-        expect(data_get($settings, 'hooks.PreToolUse.0.matcher'))->toBe('Bash');
-        expect(data_get($settings, 'hooks.PreToolUse.0.hooks.0.command'))
-            ->toBe('php "$CLAUDE_PROJECT_DIR/vendor/nwrman/laravel-toolkit/bin/enforce-test-command.php"');
-        expect(File::exists(dirname(__DIR__, 2).'/bin/enforce-test-command.php'))->toBeTrue();
-    } finally {
-        File::deleteDirectory($claudeDir);
-    }
-});
-
-it('does not duplicate the guard hook when it already exists in settings.json', function (): void {
+it('removes the retired guard hook and keeps every other hook, in two-space JSON', function (): void {
     $claudeDir = base_path('.claude');
     File::ensureDirectoryExists($claudeDir);
-    File::put($claudeDir.'/settings.json', json_encode([
+    File::put($claudeDir.'/settings.json', (string) json_encode([
+        'permissions' => ['allow' => ['Bash(ls:*)']],
         'hooks' => [
             'PreToolUse' => [
-                ['matcher' => 'Bash', 'hooks' => [['type' => 'command', 'command' => 'php "$CLAUDE_PROJECT_DIR/vendor/nwrman/laravel-toolkit/bin/enforce-test-command.php"']]],
+                ['matcher' => 'Bash', 'hooks' => [
+                    ['type' => 'command', 'command' => 'php "$CLAUDE_PROJECT_DIR/vendor/nwrman/laravel-toolkit/bin/enforce-test-command.php"'],
+                    ['type' => 'command', 'command' => 'echo kept-beside'],
+                ]],
+                ['matcher' => 'Edit', 'hooks' => [['type' => 'command', 'command' => 'echo kept-alone']]],
             ],
         ],
     ], JSON_PRETTY_PRINT));
 
     try {
-        $this->artisan('toolkit:install')
-            ->expectsConfirmation('Move nwrman/laravel-toolkit to require-dev?', 'no')
-            ->expectsConfirmation('Merge recommended composer scripts?', 'no')
-            ->expectsConfirmation('Standardize composer test:* scripts to the toolkit convention (overwrites existing test:* / test)?', 'no')
-            ->expectsConfirmation('Publish AI skills & guidelines?', 'no')
-            ->expectsConfirmation('Install Claude Code test-command guard hook?', 'yes')
-            ->expectsConfirmation('Publish GitHub Actions workflow?', 'no')
-            ->expectsConfirmation('Publish static analysis configs (pint.json, phpstan.neon)?', 'no')
-            ->expectsConfirmation('Publish deploy notification command (and test)?', 'no')
-            ->expectsConfirmation('Publish deployment scripts?', 'no')
-            ->expectsOutputToContain('guard hook already present')
+        installWithEveryPromptDeclined()
+            ->expectsOutputToContain('Removed the retired test-command guard hook')
             ->assertExitCode(0);
 
-        $settings = json_decode(File::get($claudeDir.'/settings.json'), true);
-        expect($settings['hooks']['PreToolUse'])->toHaveCount(1);
+        $contents = File::get($claudeDir.'/settings.json');
+
+        expect(json_decode($contents, true))->toBe([
+            'permissions' => ['allow' => ['Bash(ls:*)']],
+            'hooks' => [
+                'PreToolUse' => [
+                    ['matcher' => 'Bash', 'hooks' => [['type' => 'command', 'command' => 'echo kept-beside']]],
+                    ['matcher' => 'Edit', 'hooks' => [['type' => 'command', 'command' => 'echo kept-alone']]],
+                ],
+            ],
+        ])->and($contents)->toContain("\n  \"hooks\"");
     } finally {
         File::deleteDirectory($claudeDir);
     }
 });
 
-it('repoints a guard hook entry at the old published copy to vendor/, and flags the copy', function (): void {
+it('drops a hook entry the guard was the only hook of, the old published copy included, and flags the copy', function (): void {
     $claudeDir = base_path('.claude');
     File::ensureDirectoryExists($claudeDir.'/hooks');
     File::put($claudeDir.'/hooks/enforce-test-command.php', '<?php // frozen copy');
-    File::put($claudeDir.'/settings.json', json_encode([
+    File::put($claudeDir.'/settings.json', (string) json_encode([
         'hooks' => [
             'PreToolUse' => [
                 ['matcher' => 'Bash', 'hooks' => [['type' => 'command', 'command' => 'php "$CLAUDE_PROJECT_DIR/.claude/hooks/enforce-test-command.php"']]],
@@ -328,27 +293,35 @@ it('repoints a guard hook entry at the old published copy to vendor/, and flags 
     ], JSON_PRETTY_PRINT));
 
     try {
-        $this->artisan('toolkit:install')
-            ->expectsConfirmation('Move nwrman/laravel-toolkit to require-dev?', 'no')
-            ->expectsConfirmation('Merge recommended composer scripts?', 'no')
-            ->expectsConfirmation('Standardize composer test:* scripts to the toolkit convention (overwrites existing test:* / test)?', 'no')
-            ->expectsConfirmation('Publish AI skills & guidelines?', 'no')
-            ->expectsConfirmation('Install Claude Code test-command guard hook?', 'yes')
-            ->expectsConfirmation('Publish GitHub Actions workflow?', 'no')
-            ->expectsConfirmation('Publish static analysis configs (pint.json, phpstan.neon)?', 'no')
-            ->expectsConfirmation('Publish deploy notification command (and test)?', 'no')
-            ->expectsConfirmation('Publish deployment scripts?', 'no')
-            ->expectsOutputToContain('at vendor/')
+        installWithEveryPromptDeclined()
             ->expectsOutputToContain('nothing runs any more')
             ->assertExitCode(0);
 
-        $settings = json_decode(File::get($claudeDir.'/settings.json'), true);
-        expect($settings['hooks']['PreToolUse'])->toHaveCount(1)
-            ->and(data_get($settings, 'hooks.PreToolUse.0.hooks.0.command'))
-            ->toBe('php "$CLAUDE_PROJECT_DIR/vendor/nwrman/laravel-toolkit/bin/enforce-test-command.php"');
+        expect(json_decode(File::get($claudeDir.'/settings.json'), true))->toBe(['hooks' => ['PreToolUse' => []]]);
     } finally {
         File::deleteDirectory($claudeDir);
     }
+});
+
+it('leaves settings.json untouched when it has no guard hook', function (): void {
+    $claudeDir = base_path('.claude');
+    File::ensureDirectoryExists($claudeDir);
+    $original = "{\n    \"hooks\": {\"PreToolUse\": [{\"matcher\": \"Bash\", \"hooks\": [{\"type\": \"command\", \"command\": \"echo mine\"}]}]}\n}\n";
+    File::put($claudeDir.'/settings.json', $original);
+
+    try {
+        installWithEveryPromptDeclined()->assertExitCode(0);
+
+        expect(File::get($claudeDir.'/settings.json'))->toBe($original);
+    } finally {
+        File::deleteDirectory($claudeDir);
+    }
+});
+
+it('creates no settings.json when the app has none', function (): void {
+    installWithEveryPromptDeclined()->assertExitCode(0);
+
+    expect(File::exists(base_path('.claude/settings.json')))->toBeFalse();
 });
 
 it('warns when a non-sqlite project has no test-database isolation', function (): void {
@@ -362,7 +335,6 @@ it('warns when a non-sqlite project has no test-database isolation', function ()
             ->expectsConfirmation('Merge recommended composer scripts?', 'no')
             ->expectsConfirmation('Standardize composer test:* scripts to the toolkit convention (overwrites existing test:* / test)?', 'no')
             ->expectsConfirmation('Publish AI skills & guidelines?', 'no')
-            ->expectsConfirmation('Install Claude Code test-command guard hook?', 'no')
             ->expectsConfirmation('Publish GitHub Actions workflow?', 'no')
             ->expectsConfirmation('Publish static analysis configs (pint.json, phpstan.neon)?', 'no')
             ->expectsConfirmation('Publish deploy notification command (and test)?', 'no')
@@ -400,7 +372,6 @@ it('moves the package from require to require-dev when confirmed', function (): 
             ->expectsConfirmation('Merge recommended composer scripts?', 'no')
             ->expectsConfirmation('Standardize composer test:* scripts to the toolkit convention (overwrites existing test:* / test)?', 'no')
             ->expectsConfirmation('Publish AI skills & guidelines?', 'no')
-            ->expectsConfirmation('Install Claude Code test-command guard hook?', 'no')
             ->expectsConfirmation('Publish GitHub Actions workflow?', 'no')
             ->expectsConfirmation('Publish static analysis configs (pint.json, phpstan.neon)?', 'no')
             ->expectsConfirmation('Publish deploy notification command (and test)?', 'no')
@@ -445,7 +416,6 @@ it('reports when the package is already in require-dev', function (): void {
             ->expectsConfirmation('Merge recommended composer scripts?', 'no')
             ->expectsConfirmation('Standardize composer test:* scripts to the toolkit convention (overwrites existing test:* / test)?', 'no')
             ->expectsConfirmation('Publish AI skills & guidelines?', 'no')
-            ->expectsConfirmation('Install Claude Code test-command guard hook?', 'no')
             ->expectsConfirmation('Publish GitHub Actions workflow?', 'no')
             ->expectsConfirmation('Publish static analysis configs (pint.json, phpstan.neon)?', 'no')
             ->expectsConfirmation('Publish deploy notification command (and test)?', 'no')
@@ -487,7 +457,6 @@ it('silently skips the require-dev migration when the package is in neither sect
             ->expectsConfirmation('Merge recommended composer scripts?', 'no')
             ->expectsConfirmation('Standardize composer test:* scripts to the toolkit convention (overwrites existing test:* / test)?', 'no')
             ->expectsConfirmation('Publish AI skills & guidelines?', 'no')
-            ->expectsConfirmation('Install Claude Code test-command guard hook?', 'no')
             ->expectsConfirmation('Publish GitHub Actions workflow?', 'no')
             ->expectsConfirmation('Publish static analysis configs (pint.json, phpstan.neon)?', 'no')
             ->expectsConfirmation('Publish deploy notification command (and test)?', 'no')
@@ -520,7 +489,6 @@ function publishSkillsOnly(object $test): PendingCommand
         ->expectsConfirmation('Merge recommended composer scripts?', 'no')
         ->expectsConfirmation('Standardize composer test:* scripts to the toolkit convention (overwrites existing test:* / test)?', 'no')
         ->expectsConfirmation('Publish AI skills & guidelines?', 'yes')
-        ->expectsConfirmation('Install Claude Code test-command guard hook?', 'no')
         ->expectsConfirmation('Publish GitHub Actions workflow?', 'no')
         ->expectsConfirmation('Publish static analysis configs (pint.json, phpstan.neon)?', 'no')
         ->expectsConfirmation('Publish deploy notification command (and test)?', 'no')

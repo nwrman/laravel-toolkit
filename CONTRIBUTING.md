@@ -79,9 +79,9 @@ The `resources/filament-snapshot/` in this repo becomes the source of truth for 
 ## Testing
 
 ```bash
-composer test       # Full pest suite (73 tests)
+composer test       # Full Pest suite (needs node for the Vitest reporter's tests)
 composer analyse    # PHPStan level max
 composer format     # Pint
 ```
 
-The snapshotter (`tests/Snapshot/`) and installer (`tests/Installer/`) tests are pure PHP — they don't need the Orchestra Testbench app. Command tests (`tests/Commands/`) use Testbench via `tests/Pest.php`.
+The snapshotter, installer, config, report, Pest-plugin and support tests are pure PHP — they don't need the Orchestra Testbench app. Command, TIA and preflight tests use Testbench via `tests/Pest.php`. `tests/Pest/PluginTest.php` runs real Pest processes in a fixture project (`tests/Fixtures/pest-project`).

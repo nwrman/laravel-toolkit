@@ -17,6 +17,7 @@
     <testsuites>
         <testsuite name="Nwrman Test Suite">
             <directory>tests</directory>
+            <exclude>tests/Fixtures</exclude>
         </testsuite>
     </testsuites>
     <source>

@@ -9,22 +9,34 @@ return [
     | Preflight Gates
     |--------------------------------------------------------------------------
     |
-    | Each gate runs a shell command as part of the preflight check. Gates run
-    | in parallel. Override individual gates by publishing this config and
-    | changing only the keys you need. Set a gate to null to remove it.
+    | Each gate runs a shell command as part of `vendor/bin/preflight`. Gates run
+    | in parallel; one with `after` starts once that gate has passed. The first
+    | gate to fail stops the others. Override individual gates by publishing this
+    | config and changing only the keys you need. Set a gate to null to remove it.
+    |
+    | Gates inherit the shell's environment: nothing from `.env` reaches them, so
+    | Pest loads `.env.testing` as it does from a plain shell.
     |
     | The coverage gate runs through Test Impact Analysis when the project has
-    | it on: a replayed run reports the same coverage as a full one, so the
-    | gate stays honest and fast. `composer test:ci` is the run without TIA.
+    | it on, and leaves Browser specs out with --toolkit-no-browser, which keeps
+    | the run a full one to TIA (`--exclude-testsuite` would switch TIA off).
+    | Coverage comes from unit and feature tests. Browser specs run in their own
+    | gate after it, without coverage and on fewer workers. `composer test:ci` is
+    | the run without TIA.
     |
     */
 
     'gates' => [
         'pest-coverage' => [
             'label' => 'Pest Coverage',
-            'command' => 'vendor/bin/pest --type-coverage --min=100 && vendor/bin/pest --parallel --coverage --exactly=100.0',
+            'command' => 'vendor/bin/pest --type-coverage --min=100 && vendor/bin/pest --parallel --coverage --exactly=100.0 --toolkit-no-browser',
             'env' => ['XDEBUG_MODE' => 'coverage'],
-            'requires_build' => true,
+        ],
+        'browser' => [
+            'label' => 'Browser',
+            'command' => 'vendor/bin/pest --testsuite=Browser --parallel --processes=4',
+            'env' => ['XDEBUG_MODE' => 'off'],
+            'after' => 'pest-coverage',
         ],
         'frontend-coverage' => [
             'label' => 'Frontend Coverage',
@@ -61,8 +73,10 @@ return [
     | Frontend Build
     |--------------------------------------------------------------------------
     |
-    | Configuration for the frontend build check that runs before gates
-    | marked with 'requires_build' => true.
+    | The build Browser specs render. The Pest plugin rebuilds it before a run
+    | that could select a Browser spec, when a watched file is newer than the
+    | stamp. Set TOOLKIT_FORCE_BUILD=1 (or `preflight --force-build`) to force it.
+    | The dev server's hot file is put back if the build deletes it.
     |
     */
 
@@ -72,6 +86,7 @@ return [
         'stamp_file' => 'public/build/.buildstamp',
         'manifest_file' => 'public/build/manifest.json',
         'watch_paths' => 'resources/ vite.config.* tsconfig.* tailwind.config.* postcss.config.* package.json',
+        'hot_file' => 'public/hot',
     ],
 
     /*
@@ -79,7 +94,8 @@ return [
     | File Paths
     |--------------------------------------------------------------------------
     |
-    | Paths for state files and reports, relative to the project root.
+    | Paths for state files and reports, relative to the project root. Every
+    | Pest run writes the JUnit file and, when something fails, the report.
     |
     */
 
@@ -93,25 +109,12 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | Test Suites
-    |--------------------------------------------------------------------------
-    |
-    | Named test suites available for the test:report command. Keys are used
-    | as identifiers; values are displayed labels.
-    |
-    */
-
-    'suites' => [
-        'unit' => 'Unit',
-        'feature' => 'Feature',
-        'browser' => 'Browser',
-        'frontend' => 'Frontend (Vitest)',
-    ],
-
-    /*
-    |--------------------------------------------------------------------------
     | Frontend Commands
     |--------------------------------------------------------------------------
+    |
+    | The command `toolkit:install` writes into `composer test` and
+    | `composer test:frontend`.
+    |
     */
 
     'frontend_test_command' => 'bun run test:ui',
@@ -122,9 +125,10 @@ return [
     |--------------------------------------------------------------------------
     |
     | Pest's TIA replays only the tests a change can actually reach. It engages
-    | on full runs only — `--testsuite` and `--ci` both switch it off — so this
-    | applies when every backend suite is selected, and narrower runs keep the
-    | existing driver-off path.
+    | on full runs only: `--testsuite`, `--filter` and the other selection flags
+    | switch it off. With this on, preflight keeps the coverage cache in step
+    | with the commit it matches, and `toolkit:install` runs `composer test`
+    | with a coverage driver so TIA can record.
     |
     | Requires a coverage driver (recording costs roughly 2x, once) and
     | `pest()->tia()` in tests/Pest.php. Off by default; the flag alone does

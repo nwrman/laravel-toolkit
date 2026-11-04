@@ -8,13 +8,15 @@ use Illuminate\Support\ServiceProvider;
 use Mockery\MockInterface;
 use Nwrman\LaravelToolkit\LaravelToolkitServiceProvider;
 
-it('registers toolkit commands (except deploy-notify, which is published into the consumer app)', function (): void {
+it('registers no artisan command that runs tests: those run without booting Laravel', function (): void {
     $commands = Artisan::all();
 
-    expect($commands)->toHaveKey('toolkit:preflight')
-        ->toHaveKey('toolkit:report')
-        ->toHaveKey('toolkit:retry')
-        ->toHaveKey('toolkit:install');
+    expect($commands)->toHaveKey('toolkit:install')
+        ->toHaveKey('starter:install-filament')
+        ->toHaveKey('toolkit:tia')
+        ->not->toHaveKey('toolkit:preflight')
+        ->not->toHaveKey('toolkit:report')
+        ->not->toHaveKey('toolkit:retry');
 
     // DeployNotifyTelegramCommand is no longer package-resident; it's published as a stub.
     expect($commands)->not->toHaveKey('toolkit:deploy-notify');

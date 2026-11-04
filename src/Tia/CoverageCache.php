@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Nwrman\LaravelToolkit\Tia;
 
-use Illuminate\Support\Facades\File;
+use Illuminate\Filesystem\Filesystem;
 use SebastianBergmann\CodeCoverage\CodeCoverage;
 
 /**
@@ -20,19 +20,19 @@ final class CoverageCache
     /**
      * Rewrites every path under $from to sit under $to.
      */
-    public static function rebase(string $file, string $from, string $to): void
+    public static function rebase(Filesystem $files, string $file, string $from, string $to): void
     {
         if ($from === $to) {
             return;
         }
 
-        $bytes = @gzdecode(File::get($file));
+        $bytes = @gzdecode($files->get($file));
 
         if ($bytes === false) {
             return;
         }
 
-        File::put($file, (string) gzencode(self::rebaseSerialized($bytes, $from, $to)));
+        $files->put($file, (string) gzencode(self::rebaseSerialized($bytes, $from, $to)));
     }
 
     /**
@@ -77,9 +77,9 @@ final class CoverageCache
      *
      * @param  array<int, string>  $paths
      */
-    public static function forget(string $file, array $paths): ?int
+    public static function forget(Filesystem $files, string $file, array $paths): ?int
     {
-        $bytes = @gzdecode(File::get($file));
+        $bytes = @gzdecode($files->get($file));
         $coverage = $bytes === false ? null : @unserialize($bytes);
 
         if (! $coverage instanceof CodeCoverage) {
@@ -97,7 +97,7 @@ final class CoverageCache
 
         $data->setLineCoverage(array_diff_key($lines, $held));
         $data->setFunctionCoverage(array_diff_key($functions, $held));
-        File::put($file, (string) gzencode(serialize($coverage)));
+        $files->put($file, (string) gzencode(serialize($coverage)));
 
         return count($held);
     }
@@ -105,11 +105,11 @@ final class CoverageCache
     /**
      * Last-modified time, or null when there is no cache.
      */
-    public static function modifiedAt(string $directory): ?int
+    public static function modifiedAt(Filesystem $files, string $directory): ?int
     {
         $file = $directory.DIRECTORY_SEPARATOR.self::FILE;
         clearstatcache(true, $file);
 
-        return File::isFile($file) ? File::lastModified($file) : null;
+        return $files->isFile($file) ? $files->lastModified($file) : null;
     }
 }

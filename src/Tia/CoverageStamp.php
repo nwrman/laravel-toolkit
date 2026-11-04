@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Nwrman\LaravelToolkit\Tia;
 
-use Illuminate\Support\Facades\File;
+use Illuminate\Filesystem\Filesystem;
 
 /**
  * What Pest's coverage cache matches: the checkout that recorded it, and the commit
@@ -30,15 +30,15 @@ final readonly class CoverageStamp
         public array $tree,
     ) {}
 
-    public static function read(string $directory): ?self
+    public static function read(Filesystem $files, string $directory): ?self
     {
         $path = $directory.DIRECTORY_SEPARATOR.self::FILE;
 
-        if (! File::isFile($path)) {
+        if (! $files->isFile($path)) {
             return null;
         }
 
-        $stamp = json_decode(File::get($path), true);
+        $stamp = json_decode($files->get($path), true);
 
         if (! is_array($stamp) || ! is_string($stamp['root'] ?? null) || ! is_string($stamp['sha'] ?? null) || $stamp['sha'] === '') {
             return null;
@@ -55,10 +55,10 @@ final readonly class CoverageStamp
         return new self($root, $this->sha, $this->tree);
     }
 
-    public function writeTo(string $directory): void
+    public function writeTo(Filesystem $files, string $directory): void
     {
-        File::ensureDirectoryExists($directory);
-        File::put($directory.DIRECTORY_SEPARATOR.self::FILE, (string) json_encode([
+        $files->ensureDirectoryExists($directory);
+        $files->put($directory.DIRECTORY_SEPARATOR.self::FILE, (string) json_encode([
             'root' => $this->root,
             'sha' => $this->sha,
             'tree' => (object) $this->tree,

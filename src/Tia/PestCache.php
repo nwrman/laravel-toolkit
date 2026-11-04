@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Nwrman\LaravelToolkit\Tia;
 
-use Illuminate\Support\Facades\Process;
+use Illuminate\Process\Factory;
 
 /**
  * Where Pest keeps a checkout's TIA cache.
@@ -18,10 +18,12 @@ use Illuminate\Support\Facades\Process;
  */
 class PestCache
 {
+    public function __construct(private readonly Factory $process) {}
+
     public function directory(string $root): ?string
     {
         // laravel/pao would wrap the path in JSON when an agent runs this.
-        $result = Process::path($root)->env(['PAO_DISABLE' => '1'])->run(['vendor/bin/pest', '--baseline']);
+        $result = $this->process->newPendingProcess()->path($root)->env(['PAO_DISABLE' => '1'])->run(['vendor/bin/pest', '--baseline']);
 
         if (! $result->successful()) {
             return null;

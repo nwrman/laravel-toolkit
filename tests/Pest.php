@@ -8,7 +8,7 @@ use Nwrman\LaravelToolkit\Tests\TestCase;
 // Orchestra Testbench is only needed for tests that exercise Artisan
 // commands, service providers, or the Laravel container. Pure-PHP unit
 // tests (Snapshot, Installer) do not need it.
-uses(TestCase::class)->in('Commands', 'Tia', 'LaravelToolkitServiceProviderTest.php');
+uses(TestCase::class)->in('Commands', 'Tia', 'Preflight', 'LaravelToolkitServiceProviderTest.php');
 
 function git(string $cwd, string ...$arguments): string
 {

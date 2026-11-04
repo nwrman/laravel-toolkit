@@ -1,0 +1,28 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+/*
+ * The toolkit's ship gate, run as `vendor/bin/preflight` (or `composer preflight`)
+ * from the project's root. It never boots Laravel: see Nwrman\LaravelToolkit\Preflight.
+ */
+
+use Nwrman\LaravelToolkit\Preflight\PreflightCommand;
+use Symfony\Component\Console\Application;
+
+$autoload = $GLOBALS['_composer_autoload_path'] ?? null;
+
+foreach ([$autoload, getcwd().'/vendor/autoload.php', __DIR__.'/../vendor/autoload.php', __DIR__.'/../../../autoload.php'] as $file) {
+    if (is_string($file) && is_file($file)) {
+        require $file;
+
+        break;
+    }
+}
+
+$command = new PreflightCommand((string) getcwd());
+$application = new Application('preflight');
+method_exists($application, 'addCommand') ? $application->addCommand($command) : $application->add($command);
+$application->setDefaultCommand('preflight', true);
+$application->run();

@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace Nwrman\LaravelToolkit\Tia;
 
-use Illuminate\Support\Facades\File;
-use Illuminate\Support\Facades\Process;
+use Illuminate\Filesystem\Filesystem;
+use Illuminate\Process\Factory;
 
 /**
  * Hands complete TIA baselines from landed work to new work, so no checkout records
@@ -23,7 +23,11 @@ use Illuminate\Support\Facades\Process;
  */
 final readonly class TiaBaselines
 {
-    public function __construct(private PestCache $cache) {}
+    public function __construct(
+        private PestCache $cache,
+        private Filesystem $files,
+        private Factory $process,
+    ) {}
 
     /**
      * Why the checkout's current branch has no usable baseline, or null when it has one.
@@ -56,7 +60,7 @@ final readonly class TiaBaselines
         $base ??= $this->baseFor($root, $branch);
 
         try {
-            $snapshot = BaselineSnapshot::read($this->storeFor($root, $base), $base);
+            $snapshot = BaselineSnapshot::read($this->files, $this->storeFor($root, $base), $base);
         } catch (UnusableBaseline $unusable) {
             return sprintf('No usable TIA baseline published for %s (%s). The first `composer test` records one.', $base, $unusable->getMessage());
         }
@@ -84,15 +88,15 @@ final readonly class TiaBaselines
         $directory = $this->cache->directory($root);
         $branch = $this->branch($root);
 
-        if ($directory === null || $branch === null || CoverageCache::modifiedAt($directory) === null) {
+        if ($directory === null || $branch === null || CoverageCache::modifiedAt($this->files, $directory) === null) {
             return null;
         }
 
-        $stamp = CoverageStamp::read($directory);
+        $stamp = CoverageStamp::read($this->files, $directory);
 
         if (! $stamp instanceof CoverageStamp || ! $this->isAncestor($root, $stamp->sha, 'HEAD')) {
-            File::delete($directory.DIRECTORY_SEPARATOR.CoverageCache::FILE);
-            File::delete($directory.DIRECTORY_SEPARATOR.CoverageStamp::FILE);
+            $this->files->delete($directory.DIRECTORY_SEPARATOR.CoverageCache::FILE);
+            $this->files->delete($directory.DIRECTORY_SEPARATOR.CoverageStamp::FILE);
 
             return $stamp instanceof CoverageStamp
                 ? sprintf('TIA: the coverage cache is from %s, outside this branch\'s history. Recording coverage afresh.', mb_substr($stamp->sha, 0, 7))
@@ -103,8 +107,8 @@ final readonly class TiaBaselines
         $here = $this->realRoot($root);
 
         if ($stamp->root !== $here) {
-            CoverageCache::rebase($directory.DIRECTORY_SEPARATOR.CoverageCache::FILE, $stamp->root, $here);
-            $stamp->withRoot($here)->writeTo($directory);
+            CoverageCache::rebase($this->files, $directory.DIRECTORY_SEPARATOR.CoverageCache::FILE, $stamp->root, $here);
+            $stamp->withRoot($here)->writeTo($this->files, $directory);
             $done[] = sprintf('moved the coverage cache\'s paths from %s', $stamp->root);
         }
 
@@ -113,11 +117,11 @@ final readonly class TiaBaselines
         }
 
         $changed = array_map(fn (string $path): string => $here.DIRECTORY_SEPARATOR.$path, $this->changedSince($root, $stamp));
-        $forgotten = $changed === [] ? 0 : CoverageCache::forget($directory.DIRECTORY_SEPARATOR.CoverageCache::FILE, $changed);
+        $forgotten = $changed === [] ? 0 : CoverageCache::forget($this->files, $directory.DIRECTORY_SEPARATOR.CoverageCache::FILE, $changed);
 
         if ($forgotten === null) {
-            File::delete($directory.DIRECTORY_SEPARATOR.CoverageCache::FILE);
-            File::delete($directory.DIRECTORY_SEPARATOR.CoverageStamp::FILE);
+            $this->files->delete($directory.DIRECTORY_SEPARATOR.CoverageCache::FILE);
+            $this->files->delete($directory.DIRECTORY_SEPARATOR.CoverageStamp::FILE);
 
             return 'TIA: the coverage cache could not be read. Recording coverage afresh.';
         }
@@ -130,11 +134,14 @@ final readonly class TiaBaselines
     }
 
     /**
-     * Sets the coverage cache's stamp aside before a coverage gate runs, and notes what
-     * the run covers: the checked-out commit, plus every file that differs from it.
-     * Uncommitted files go in with an empty hash, which matches no file, so the run after
-     * this one replays them whatever they hold by then. With the stamp aside, a run that
-     * dies part-way leaves a cache the next run will not trust.
+     * Notes what a coverage gate covers before it runs: the checked-out commit, plus
+     * every file that differs from it. Uncommitted files go in with an empty hash, which
+     * matches no file, so the run after this one replays them whatever they hold by then.
+     *
+     * The cache's current stamp stays where it is. Pest writes the coverage cache only
+     * when the tests passed (its coverage report runs on exit 0 only), so a run that is
+     * interrupted, stopped by another gate's failure or fails a test leaves the cache
+     * as it was, and the stamp still matches it.
      */
     public function startCoverageRun(string $root): ?CoverageRun
     {
@@ -149,42 +156,25 @@ final readonly class TiaBaselines
         $untracked = (string) $this->git($root, ['ls-files', '--others', '--exclude-standard']);
         $dirty = preg_split('/\R/', mb_trim($changed."\n".$untracked), -1, PREG_SPLIT_NO_EMPTY) ?: [];
 
-        $previous = CoverageStamp::read($directory);
-        File::delete($directory.DIRECTORY_SEPARATOR.CoverageStamp::FILE);
-
-        return new CoverageRun($directory, new CoverageStamp($this->realRoot($root), $sha, array_fill_keys($dirty, '')), $previous, time());
+        return new CoverageRun($directory, new CoverageStamp($this->realRoot($root), $sha, array_fill_keys($dirty, '')), time());
     }
 
     /**
-     * Settles the stamp once the coverage gate is done.
+     * Stamps the cache once the coverage gate is done, if the run rewrote it.
      *
-     * Pest writes its coverage cache whether the tests passed or not, and a test that
-     * stopped part-way leaves only the lines it reached. So a cache the run rewrote is
-     * stamped only when the gate passed, on the commit it started on. A failed gate's
-     * cache is deleted, and the next run records coverage afresh. A cache the run did
-     * not touch gets its old stamp back. Returns a line to print, or null.
+     * A rewritten cache means every test passed, whatever the gate's exit code: the
+     * coverage minimum is checked after the cache is written, so a gate that failed only
+     * on the minimum still leaves a cache that is right, and it is kept. It is stamped
+     * with the commit the run started on even when HEAD moved during the run: the
+     * commits since then show up as changes on the next run, which replays them.
      */
-    public function finishCoverageRun(string $root, CoverageRun $run, bool $passed): ?string
+    public function finishCoverageRun(CoverageRun $run): void
     {
-        $modifiedAt = CoverageCache::modifiedAt($run->directory);
+        $modifiedAt = CoverageCache::modifiedAt($this->files, $run->directory);
 
-        if ($modifiedAt === null || $modifiedAt < $run->startedAt) {
-            $run->previous?->writeTo($run->directory);
-
-            return null;
+        if ($modifiedAt !== null && $modifiedAt >= $run->startedAt) {
+            $run->checkpoint->writeTo($this->files, $run->directory);
         }
-
-        if (! $passed) {
-            File::delete($run->directory.DIRECTORY_SEPARATOR.CoverageCache::FILE);
-
-            return 'TIA: the coverage gate failed, so the coverage it saved is not trusted. The next run records coverage afresh.';
-        }
-
-        if ($this->git($root, ['rev-parse', 'HEAD']) === $run->checkpoint->sha) {
-            $run->checkpoint->writeTo($run->directory);
-        }
-
-        return null;
     }
 
     /**
@@ -210,7 +200,7 @@ final readonly class TiaBaselines
     private function rewindGraph(string $directory, string $branch, CoverageStamp $stamp): bool
     {
         $path = $directory.DIRECTORY_SEPARATOR.BaselineSnapshot::GRAPH;
-        $graph = File::isFile($path) ? json_decode(File::get($path), true) : null;
+        $graph = $this->files->isFile($path) ? json_decode($this->files->get($path), true) : null;
 
         if (! is_array($graph) || ! is_array($graph['baselines'] ?? null)) {
             return false;
@@ -225,7 +215,7 @@ final readonly class TiaBaselines
         }
 
         $graph['baselines'][$branch] = [...$baseline, 'sha' => $stamp->sha, 'tree' => (object) $stamp->tree];
-        File::put($path, (string) json_encode($graph, JSON_UNESCAPED_SLASHES));
+        $this->files->put($path, (string) json_encode($graph, JSON_UNESCAPED_SLASHES));
 
         return true;
     }
@@ -241,7 +231,7 @@ final readonly class TiaBaselines
     private function problemWith(string $root, string $branch, string $directory): ?string
     {
         try {
-            $snapshot = BaselineSnapshot::read($directory, $branch);
+            $snapshot = BaselineSnapshot::read($this->files, $directory, $branch);
         } catch (UnusableBaseline $unusable) {
             return $unusable->getMessage();
         }
@@ -263,7 +253,7 @@ final readonly class TiaBaselines
         $base ??= $this->baseFor($root, $branch);
 
         try {
-            $snapshot = BaselineSnapshot::read($directory, $branch);
+            $snapshot = BaselineSnapshot::read($this->files, $directory, $branch);
         } catch (UnusableBaseline $unusable) {
             return sprintf('Not published: %s.', $unusable->getMessage());
         }
@@ -281,10 +271,10 @@ final readonly class TiaBaselines
         }
 
         $staging = $store.'.tmp-'.getmypid();
-        File::deleteDirectory($staging);
+        $this->files->deleteDirectory($staging);
         $snapshot->writeTo($staging, $base);
-        File::deleteDirectory($store);
-        File::moveDirectory($staging, $store);
+        $this->files->deleteDirectory($store);
+        $this->files->moveDirectory($staging, $store);
 
         return sprintf('Published the TIA baseline at %s for %s.', mb_substr($snapshot->sha, 0, 7), $base);
     }
@@ -344,7 +334,7 @@ final readonly class TiaBaselines
     private function hasNewer(string $root, string $store, string $base, string $sha, string $ref): bool
     {
         try {
-            $current = BaselineSnapshot::read($store, $base);
+            $current = BaselineSnapshot::read($this->files, $store, $base);
         } catch (UnusableBaseline) {
             return false;
         }
@@ -363,7 +353,7 @@ final readonly class TiaBaselines
 
     private function isAncestor(string $root, string $sha, string $ref): bool
     {
-        return Process::path($root)->run(['git', 'merge-base', '--is-ancestor', $sha, $ref])->successful();
+        return $this->process->newPendingProcess()->path($root)->run(['git', 'merge-base', '--is-ancestor', $sha, $ref])->successful();
     }
 
     /**
@@ -371,7 +361,7 @@ final readonly class TiaBaselines
      */
     private function git(string $root, array $arguments): ?string
     {
-        $result = Process::path($root)->run(['git', ...$arguments]);
+        $result = $this->process->newPendingProcess()->path($root)->run(['git', ...$arguments]);
 
         return $result->successful() ? mb_trim($result->output()) : null;
     }

@@ -1,61 +1,64 @@
 # Running Tests
 
-This project runs tests through `composer` scripts that wrap `nwrman/laravel-toolkit`. They write a structured failure
-report you read instead of scrolling terminal output. Do **not** shell out to `pest` / `phpunit` / `php artisan test` for
-full or per-suite runs; a guard hook blocks them.
+Tests run through `nwrman/laravel-toolkit`, and no test command boots Laravel. Pest runs from the shell, where
+`phpunit.xml`'s `APP_ENV=testing` makes Laravel load `.env.testing`, so every run uses the test database. A Pest plugin
+writes the failure report on every run, `vendor/bin/pest` included: read the report instead of scrolling output.
 
 ## The order: narrowest check first, the full gate once
 
 Every change gets a test. Then check it in this order, and stop climbing as soon as a step fails — fix, and re-run *that
 step*, not the one above it.
 
-1. **The test you just wrote or touched**: `php artisan test --filter='name or file'`. Seconds.
+1. **The test you just wrote or touched**: `vendor/bin/pest --filter='name or file'`. Seconds.
 2. **Everything your change can reach**: `composer test`. With Test Impact Analysis on (see below) it replays only the
-   backend tests the working tree can affect, and writes the failure report. Without TIA, `composer test -- --filter=X`
-   narrows it by hand.
-3. **The ship gate, once, at the end**: `composer preflight` — coverage, lint and types in parallel, with a summary
-   table.
-4. **After a gate fails: re-run only what failed.** `php artisan toolkit:preflight --retry` re-runs the failed gates;
-   `--gate=lint` (or `types`, `pest-coverage`, `frontend-coverage`) runs one. A lint or type fix never needs the test
-   suite again.
+   backend tests the working tree can affect, then runs the frontend tests.
+3. **After a failure: only what failed.** `composer test:retry` re-runs exactly the failed tests, by file and name.
+4. **The ship gate, once, at the end**: `composer preflight`. It stops at the first failing gate and prints every
+   gate's row.
+5. **After a gate fails: only what did not pass.** `vendor/bin/preflight --retry`, or `--gate=lint` (or `types`,
+   `pest-coverage`, `browser`, `frontend-coverage`) for one. A lint or type fix is confirmed by its own gate.
 
-**Never re-run the full gate to confirm a narrow fix.** An ArchTest edit is confirmed by that one test, a Pint or
-Rector fix by `--gate=lint`, one failing browser spec by that spec. Re-running the full gate after each of them is the
-single biggest waste of time this setup sees: minutes per run, several runs per task.
+**Confirm a narrow fix with the narrowest check.** An ArchTest edit is confirmed by that one test, a Pint or Rector fix
+by `--gate=lint`, one failing browser spec by that spec. Re-running the full gate after each of them is the single
+biggest waste of time this setup sees: minutes per run, several runs per task. The preflight table already shows the
+gates that passed earlier (`passed, previous run`), so a re-run for the table is never needed.
 
 ### `composer test:ci` — the "would CI pass?" check
 
-`test:ci` runs exactly what CI runs, serially, with Test Impact Analysis off — every test, from scratch. Use it **once**, when you need that exact
-answer — before pushing a branch whose state you have not seen CI judge, or on a freshly provisioned checkout to prove
-a clean install works. It is not a fix loop: it is the slowest way to learn about a lint error. For a truly clean
-install (fresh `vendor/`, fresh database, no local caches), the honest checks are CI on the PR, or `test:ci` in a newly
-provisioned worktree.
+`test:ci` runs exactly what CI runs, serially, with Test Impact Analysis off — every test, from scratch. Use it **once**,
+when you need that exact answer: before pushing a branch whose state you have not seen CI judge, or on a freshly
+provisioned checkout. It is the slowest way to learn about a lint error, so it is never the fix loop.
 
-## Commands
+## The failure report
 
-Each wrapper writes these **only when something fails**; a green run prints `✓ All tests passed!` and deletes them.
+Every Pest run writes these when something fails, and removes them once it passes:
 
-- `storage/logs/test-failures.md` — markdown report: class, file, line, error, and a `--filter` re-run hint per failure.
-- `storage/logs/test-failures.json` — the same, structured (feeds `composer test:retry`).
+- `storage/logs/test-failures.md` — each failure's file, class, error, and a command that re-runs exactly that test.
+- `storage/logs/test-failures.json` — the same, structured; `composer test:retry` reads it.
 - `storage/logs/test-results.xml` — JUnit XML.
+
+Vitest failures land in the same report, under their own heading. Run a printed command exactly as printed: its
+`--filter` is anchored and quoted, so it selects that one test and no other whose name contains it.
 
 | Command | Runs |
 | --- | --- |
-| `composer test` | Every suite; with TIA, only the affected backend tests. The default. |
-| `composer test -- --filter=X` | Only the backend tests matching `X`, with the report — and the frontend build check first when a browser spec could match. |
-| `composer test:unit` / `test:feature` / `test:browser` | One suite, in full. For one suite's report — not a way to go faster (it switches TIA off). |
-| `composer test:frontend` | The Vitest suite, in full (Vitest is not TIA-aware). `bunx vitest run path/to/file.test.tsx` for one file. |
-| `composer test:fast` | The backend through TIA, without the report. The tightest loop. |
-| `composer test:retry` | Only the tests that failed last run. |
-| `composer test:report` | Interactive suite picker. |
-| `composer preflight` | The ship gate: all gates in parallel, summary table. `--retry`, `--gate=<name>`. |
-| `composer test:ci` | What CI runs, serially, TIA off. Once, not in a loop (above). |
+| `composer test` | Pest (with TIA, only the affected backend tests), then the frontend tests. The default. |
+| `vendor/bin/pest --filter=X` | Only the backend tests matching `X`, with the report and the asset build check. |
+| `composer test:retry` | Exactly the tests that failed last run, backend and frontend. |
+| `composer test:unit` / `test:feature` / `test:browser` | One suite, in full. For one suite's report; it switches TIA off. |
+| `composer test:frontend` | The frontend suite, in full. `bunx vitest run path/to/file.test.tsx` for one file. |
+| `composer preflight` | The ship gate: every gate in parallel, fail-fast, summary table. `--retry`, `--gate=<name>`. |
+| `composer test:ci` | What CI runs, serially, TIA off. Once, as above. |
 
 ### Browser specs
 
-Browser specs render the frontend from the built assets in `public/build`, not from the dev server. Run one through the
-wrapper — `composer test -- --filter='GalleryTest'` — which rebuilds the assets first when `resources/` is newer than the
-last build. `php artisan test --filter` on a browser spec skips that check and can silently test yesterday's bundle.
+Browser specs render the frontend from the built assets in `public/build`, not from the dev server. Any Pest run that
+could select a browser spec rebuilds the assets first when `resources/` is newer than the last build, and keeps the
+dev server's `public/hot` file. `TOOLKIT_FORCE_BUILD=1 vendor/bin/pest …` forces the rebuild.
+
+Preflight runs browser specs in their own `browser` gate, after the coverage gate, without coverage. Coverage comes from
+unit and feature tests, so cover page props with a feature test (`assertInertia`, partial-reload headers), never with a
+browser visit.
 
 ## Test Impact Analysis
 
@@ -64,19 +67,16 @@ touches which file and replays only the tests a change can reach. One edited fil
 suite; an unchanged tree runs nothing; a comment-only edit or a formatter pass runs zero tests.
 
 - **Prefer a full run over guessing a suite.** TIA selects by real dependency, so it catches the feature and browser
-  tests a "this is just a unit change" guess would miss. Selecting a suite by hand switches TIA off and can under-test.
+  tests a "this is just a unit change" guess would miss. Selecting a suite or a filter switches TIA off.
 - **Coverage works through TIA.** A replayed run stores what each test covered, so `composer preflight`'s coverage
-  gate reports the same numbers as a full run — just faster. `composer test:ci` runs with `--no-tia`, because it
-  answers "would CI pass?" and CI runs every test.
+  gate reports the same numbers as a full run — just faster. It leaves browser specs out with `--toolkit-no-browser`,
+  which keeps the run a full one to TIA; `--exclude-testsuite` and the other selection flags would switch TIA off, so
+  preflight refuses a coverage gate that passes one.
 - **Preflight keeps the coverage cache honest.** Before the coverage gate it moves Pest's commit back to the one the
   coverage cache matches (a plain `composer test` moves it on without updating coverage), moves a cache recorded in
   another checkout to this one, takes every file changed since out of the cache so the run covers it afresh, and
-  deletes a cache it cannot place so the run records coverage afresh. After a failed coverage gate it drops the
-  coverage that run saved, so the next run records afresh. It prints a `TIA:` line when it does any of these. Running `composer test` or `test:fast` never repairs coverage — only a
-  coverage run writes it.
-- **Keep the coverage gate unfiltered.** `--exclude-testsuite`, `--group`, `--filter` and the other selection flags make
-  Pest switch TIA off, so every preflight would re-run the whole suite. `toolkit:preflight` refuses such a gate; with
-  TIA on, Browser specs only run when a change can reach them, so there is nothing to gain by excluding them.
+  deletes a cache it cannot place. It prints a `TIA:` line when it does any of these. Only a coverage run writes
+  coverage, so `composer test` never repairs it.
 - The graph lives outside the repo in `~/.pest/tia/` and rebuilds itself when `composer.lock`, `phpunit.xml`, the vite
   config or the node lockfile change. Nothing to gitignore.
 - If a coverage number still looks wrong — a percentage that will not move, or a file you never touched reported as
@@ -85,28 +85,12 @@ suite; an unchanged tree runs nothing; a comment-only edit or a formatter pass r
   delete the coverage cache (`vendor/bin/pest --baseline` prints its directory; remove `coverage.bin.gz` there) and
   re-run the coverage gate.
 
-## After a failure
-
-**Read `storage/logs/test-failures.md` instead of re-running to scroll output.** It has each failure's class, file,
-line, error and a ready-to-paste filter. Iterate on one failing test with `php artisan test --filter='TestName'` — the
-readable test name, not the `__pest_evaluable_` symbol.
-
 ## Test-database isolation (non-sqlite projects)
 
-`composer test:*` runs `php artisan toolkit:report`, an artisan parent that loads `.env`, so a non-sqlite project must
-isolate its test database or **tests run against the dev database**. Either:
-
-- a committed **`.env.testing`** with the test database, and `--env=testing` on the scripts (the toolkit installer wires
-  this when `.env.testing` exists), **or**
-- **force-pinned** `DB_*` in `phpunit.xml`, e.g. `<env name="DB_DATABASE" value="..." force="true"/>`.
-
+Pest runs with `APP_ENV=testing` (forced in `phpunit.xml`), so Laravel loads `.env.testing`. Keep a `.env.testing`
+that names the test database — or force-pin `DB_*` in `phpunit.xml`. Without either, Laravel falls back to `.env` and
+its database. The scripts carry no `--env=testing`: nothing boots Laravel, so there is no `.env` to keep out.
 Sqlite-in-memory projects (`DB_DATABASE=:memory:` forced in `phpunit.xml`) are already isolated.
-
-## Guard hook
-
-A `PreToolUse` hook (`vendor/nwrman/laravel-toolkit/bin/enforce-test-command.php`, wired in `.claude/settings.json`)
-blocks raw `pest` / `phpunit` / `php artisan test` runs and points back to the wrappers. Single-test runs with
-`--filter` are allowed.
 
 ## Push permutations down the stack
 
