@@ -25,7 +25,8 @@ use Symfony\Component\Console\Output\OutputInterface;
  * included, gets the failure report and the asset build check, with no artisan parent
  * to load `.env` into the tests' environment.
  *
- * In the parent process it:
+ * In every process that runs tests, it keeps vendor/ out of Xdebug coverage outside a
+ * coverage-report run ({@see XdebugFilter}). In the parent process it:
  * - builds the frontend first when a Browser spec could run and the build is stale;
  * - writes the report's backend section from the run's JUnit file when the run ends;
  * - with `--toolkit-retry`, runs only the tests the report lists as failed;
@@ -103,6 +104,7 @@ final class Plugin implements AddsOutput, HandlesArguments
     public function handleArguments(array $arguments): array
     {
         $root = TestSuite::getInstance()->rootPath;
+        XdebugFilter::apply($root, $arguments);
 
         if (Parallel::isWorker()) {
             if (Parallel::getGlobal(self::NO_BROWSER_GLOBAL) === true) {
