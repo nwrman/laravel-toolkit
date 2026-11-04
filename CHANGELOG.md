@@ -2,6 +2,22 @@
 
 All notable changes to `laravel-toolkit` will be documented in this file.
 
+## v1.0.1 — 2026-11-04
+
+### Fixes found moving the starter to v1 (nwrman/laravel-starter-kit#37)
+
+- **The workflow stub stamps the downloaded build.** The Pest plugin treats a build without
+  `public/build/.buildstamp` as stale and rebuilds it with `vp`, which the stub's PHP job doesn't install, so Pest
+  Coverage died before any test ran. Only the toolkit's own build writes the stamp; the artifact is the commit's own
+  build, so the job stamps it. An app on an earlier copy of the stub adds the `Stamp Build Artifact` step after its
+  download.
+- **Load the Vitest reporter only where `vendor/` is installed.** The stub's Frontend Coverage job runs Vitest without
+  `composer install`, and Vitest exits before any test when a reporter file is missing. The README and the
+  installer's hint now show the `existsSync` guard.
+- **`--toolkit-retry` drops failures whose test file is gone.** Naming a deleted file stopped Pest before any test
+  ran, and the report then showed a crash notice instead. When none is left, the retry clears them and runs nothing.
+- **The `run-preflight` skill** names every watched file (`build.watch_paths`), not only `resources/`.
+
 ## v1.0.0 — 2026-11-03
 
 ### Test runner v1: nothing that runs tests boots Laravel (#19)
