@@ -153,6 +153,54 @@ it('hands paratest a retry of several files it accepts', function (): void {
         ->not->toContain('Too many arguments');
 });
 
+/**
+ * Runs the fixture with a spec that collects Xdebug coverage while it calls code from
+ * the project's vendor/ and app/, and returns the files Xdebug recorded.
+ *
+ * @param  array<int, string>  $arguments
+ * @return array<int, string>
+ */
+function filesXdebugRecorded(string $project, array $arguments = []): array
+{
+    mkdir($project.'/app');
+    file_put_contents($project.'/vendor/probe.php', "<?php\n\nfunction vendorProbe(): int\n{\n    return 1;\n}\n");
+    file_put_contents($project.'/app/probe.php', "<?php\n\nfunction appProbe(): int\n{\n    return 1;\n}\n");
+    file_put_contents($project.'/tests/Unit/XdebugTest.php', <<<'PHP'
+        <?php
+
+        it('records coverage', function (): void {
+            $root = dirname(__DIR__, 2);
+            require_once $root.'/vendor/probe.php';
+            require_once $root.'/app/probe.php';
+            xdebug_start_code_coverage();
+            vendorProbe();
+            appProbe();
+            file_put_contents($root.'/recorded.json', json_encode(array_keys(xdebug_get_code_coverage())));
+            xdebug_stop_code_coverage();
+            expect(true)->toBeTrue();
+        });
+        PHP);
+
+    $process = new Process([PHP_BINARY, 'vendor/bin/pest', '--filter=records coverage', ...$arguments], $project, ['XDEBUG_MODE' => 'coverage', 'TOOLKIT_PEST_RUN' => false]);
+    $process->run();
+
+    /** @var array<int, string> $recorded */
+    $recorded = json_decode((string) @file_get_contents($project.'/recorded.json'), true) ?? [];
+
+    return array_map(fn (string $file): string => str_replace(realpath($project).'/', '', realpath($file) ?: $file), $recorded);
+}
+
+it('keeps vendor/ out of Xdebug coverage a test collects, as TIA\'s recorder does', function (): void {
+    $recorded = filesXdebugRecorded($this->project);
+
+    expect($recorded)->toContain('app/probe.php')
+        ->not->toContain('vendor/probe.php');
+})->skip(! extension_loaded('xdebug'), 'needs Xdebug');
+
+it('leaves Xdebug unfiltered in a coverage run, where PHPUnit sets its own filter', function (): void {
+    expect(filesXdebugRecorded($this->project, ['--coverage-php=build/coverage.php']))->toContain('vendor/probe.php');
+})->skip(! extension_loaded('xdebug'), 'needs Xdebug');
+
 it('clears the report when the retried tests pass', function (): void {
     touch($this->project.'/fail');
     runPest($this->project);

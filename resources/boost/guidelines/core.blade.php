@@ -81,12 +81,9 @@ suite; an unchanged tree runs nothing; a comment-only edit or a formatter pass r
   another checkout to this one, takes every file changed since out of the cache so the run covers it afresh, and
   deletes a cache it cannot place or one that counted browser specs differently from the gate. It prints a `TIA:`
   line when it does any of these. Only a coverage run writes coverage, so `composer test` never repairs it.
-- **Preflight records a missing graph itself.** Pest drops its graph when `composer.lock` and the other files below
-  change, and a coverage run can't record one. Preflight then runs a plain recording pass at the start of the coverage
-  gate and says so in a `TIA:` line. That first preflight takes about one full run; don't run `composer test` first to
-  "warm" it.
 - The graph lives outside the repo in `~/.pest/tia/` and rebuilds itself when `composer.lock`, `phpunit.xml`, the vite
-  config or the node lockfile change. Nothing to gitignore.
+  config or the node lockfile change. Nothing to gitignore. Only a plain run records it: until the next
+  `composer test`, the preflight coverage gate runs every test, which is slower but just as correct.
 - If a coverage number still looks wrong — a percentage that will not move, or a file you never touched reported as
   uncovered — check it with `composer test:ci` before writing a single test. If the two disagree, the replay is
   wrong: that is a toolkit bug. Report it to `nwrman/laravel-toolkit` with both outputs and the `TIA:` line, then
