@@ -11,7 +11,8 @@ step*, not the one above it.
 
 1. **The test you just wrote or touched**: `vendor/bin/pest --filter='name or file'`. Seconds.
 2. **Everything your change can reach**: `composer test`. With Test Impact Analysis on (see below) it replays only the
-   backend tests the working tree can affect, then runs the frontend tests.
+   backend tests the working tree can affect, then runs the frontend tests. It leaves browser specs out: after a change
+   a page renders, run `composer test:browser` or the specs for that page.
 3. **After a failure: only what failed.** `composer test:retry` re-runs exactly the failed tests, by file and name.
 4. **The ship gate, once, at the end**: `composer preflight`. It stops at the first failing gate and prints every
    gate's row.
@@ -42,7 +43,7 @@ Vitest failures land in the same report, under their own heading. Run a printed 
 
 | Command | Runs |
 | --- | --- |
-| `composer test` | Pest (with TIA, only the affected backend tests), then the frontend tests. The default. |
+| `composer test` | Pest without browser specs (with TIA, only the affected backend tests), then the frontend tests. The default. |
 | `vendor/bin/pest --filter=X` | Only the backend tests matching `X`, with the report and the asset build check. |
 | `composer test:retry` | Exactly the tests that failed last run, backend and frontend. |
 | `composer test:unit` / `test:feature` / `test:browser` | One suite, in full. For one suite's report; it switches TIA off. |
@@ -56,6 +57,9 @@ Browser specs render the frontend from the built assets in `public/build`, not f
 could select a browser spec rebuilds the assets first when `resources/` is newer than the last build, and keeps the
 dev server's `public/hot` file. `TOOLKIT_FORCE_BUILD=1 vendor/bin/pest …` forces the rebuild.
 
+`composer test` leaves browser specs out: under Xdebug, beside every other worker, they time out whenever many of them
+run at once. `composer test:browser` and preflight's `browser` gate run them without Xdebug, on fewer workers.
+
 Preflight runs browser specs in their own `browser` gate, after the coverage gate, without coverage. Coverage comes from
 unit and feature tests, so cover page props with a feature test (`assertInertia`, partial-reload headers), never with a
 browser visit.
@@ -66,8 +70,8 @@ When the project enables it (`pest()->tia()` in `tests/Pest.php`, `toolkit.tia.e
 touches which file and replays only the tests a change can reach. One edited file typically runs a fraction of the
 suite; an unchanged tree runs nothing; a comment-only edit or a formatter pass runs zero tests.
 
-- **Prefer a full run over guessing a suite.** TIA selects by real dependency, so it catches the feature and browser
-  tests a "this is just a unit change" guess would miss. Selecting a suite or a filter switches TIA off.
+- **Prefer a full run over guessing a suite.** TIA selects by real dependency, so it catches the feature tests a
+  "this is just a unit change" guess would miss. Selecting a suite or a filter switches TIA off.
 - **Coverage works through TIA.** A replayed run stores what each test covered, so `composer preflight`'s coverage
   gate reports the same numbers as a full run — just faster. It leaves browser specs out with `--toolkit-no-browser`,
   which keeps the run a full one to TIA; `--exclude-testsuite` and the other selection flags would switch TIA off, so
