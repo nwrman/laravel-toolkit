@@ -2,7 +2,7 @@
 
 All notable changes to `laravel-toolkit` will be documented in this file.
 
-## v1.0.2 — Unreleased
+## v1.0.2 — 2026-11-04
 
 ### Fixes found moving Minuta to v1 (Idealogo-dev/minuta-app#210)
 
