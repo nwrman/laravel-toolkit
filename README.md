@@ -123,9 +123,7 @@ gates inherit the shell's environment.
   that have not passed yet (`✓ Types passed. Not passed yet: Lint.`) and the exit code is 0.
 - **TIA.** With `toolkit.tia.enabled`, preflight lines the coverage cache up with the commit it matches before the
   coverage gate, and stamps it after a run that rewrote it. A cache that counted Browser specs differently from the
-  gate's command (a v0 cache, say) is recorded afresh. On Pest 5, when Pest has no usable graph (after a
-  `composer update`, for one), the coverage gate first runs `tia.record_command`, a plain run that records it: a
-  coverage run can't, and would run the whole suite. It refuses a coverage gate that passes a Pest selection flag
+  gate's command (a v0 cache, say) is recorded afresh. It refuses a coverage gate that passes a Pest selection flag
   (`--exclude-testsuite`, `--group`, `--filter`, …), which would switch TIA off.
 
 ```
