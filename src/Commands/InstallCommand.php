@@ -360,6 +360,11 @@ final class InstallCommand extends Command
      * halves even when the first fails, so the report never mixes this run's backend
      * with an older frontend run, and fail when either half does.
      *
+     * `composer test` leaves Browser specs out with --toolkit-no-browser, which keeps TIA
+     * on. Under Xdebug, beside every other worker, they time out whenever TIA replays
+     * many of them, as after a graph rebuild. They run in `test:browser` and in
+     * preflight's `browser` gate, without Xdebug and on fewer workers.
+     *
      * @return array<string, string|array<int, string>>
      */
     private function canonicalTestScripts(): array
@@ -370,7 +375,7 @@ final class InstallCommand extends Command
         $timeout = 'Composer\\Config::disableProcessTimeout';
 
         return [
-            'test' => [$timeout, sprintf('XDEBUG_MODE=%s pest --parallel; status=$?; %s || status=1; exit $status', $xdebug, $frontend)],
+            'test' => [$timeout, sprintf('XDEBUG_MODE=%s pest --parallel --toolkit-no-browser; status=$?; %s || status=1; exit $status', $xdebug, $frontend)],
             'test:unit' => [$timeout, 'XDEBUG_MODE=off pest --parallel --testsuite=Unit'],
             'test:feature' => [$timeout, 'XDEBUG_MODE=off pest --parallel --testsuite=Feature'],
             'test:browser' => [$timeout, 'XDEBUG_MODE=off pest --parallel --testsuite=Browser'],

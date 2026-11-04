@@ -162,7 +162,7 @@ gate's result as a plain line instead of the live display. Detection is powered 
 **Typical workflow:**
 
 ```bash
-composer test                      # what the change can reach (TIA), with the report
+composer test                      # what the change can reach (TIA), without browser specs, with the report
 composer test:retry                # after a failure: only what failed
 composer preflight                 # the ship gate, once
 vendor/bin/preflight --retry       # after a gate fails: only what did not pass
@@ -494,7 +494,7 @@ The `toolkit:install` command can merge these scripts into your `composer.json`:
 | `composer dev` | Concurrent queue worker + Pail + Vite dev server |
 | `composer lint` | Rector + Pint + frontend linting |
 | `composer lint:dirty` | Lint only files changed since last commit |
-| `composer test` | `pest --parallel`, then the frontend tests; both always run. With TIA, only the backend tests a change can reach |
+| `composer test` | `pest --parallel --toolkit-no-browser`, then the frontend tests; both always run. With TIA, only the backend tests a change can reach. Browser specs run in `test:browser` and preflight |
 | `composer test:unit` | Pest unit tests (parallel) |
 | `composer test:feature` | Pest feature tests (parallel) |
 | `composer test:browser` | Pest browser tests (parallel) |

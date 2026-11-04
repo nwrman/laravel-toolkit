@@ -184,7 +184,7 @@ it('standardizes the test scripts to plain Pest and Vitest runs, with no artisan
 
     expect($scripts)->toBe([
         'test:unit' => [$timeout, 'XDEBUG_MODE=off pest --parallel --testsuite=Unit'],
-        'test' => [$timeout, 'XDEBUG_MODE=off pest --parallel; status=$?; bun run test:ui || status=1; exit $status'],
+        'test' => [$timeout, 'XDEBUG_MODE=off pest --parallel --toolkit-no-browser; status=$?; bun run test:ui || status=1; exit $status'],
         'test:fast' => 'XDEBUG_MODE=coverage pest --parallel',
         'test:feature' => [$timeout, 'XDEBUG_MODE=off pest --parallel --testsuite=Feature'],
         'test:browser' => [$timeout, 'XDEBUG_MODE=off pest --parallel --testsuite=Browser'],
@@ -198,7 +198,7 @@ it('runs composer test with a coverage driver when TIA is on, so TIA can record'
     config(['toolkit.tia.enabled' => true]);
 
     expect(standardizedScripts([])['test'][1])
-        ->toBe('XDEBUG_MODE=coverage pest --parallel; status=$?; bun run test:ui || status=1; exit $status');
+        ->toBe('XDEBUG_MODE=coverage pest --parallel --toolkit-no-browser; status=$?; bun run test:ui || status=1; exit $status');
 });
 
 it('writes the app\'s frontend command into composer test and test:frontend', function (): void {
@@ -206,7 +206,7 @@ it('writes the app\'s frontend command into composer test and test:frontend', fu
 
     $scripts = standardizedScripts([]);
 
-    expect($scripts['test'][1])->toBe('XDEBUG_MODE=off pest --parallel; status=$?; npm run test:unit || status=1; exit $status')
+    expect($scripts['test'][1])->toBe('XDEBUG_MODE=off pest --parallel --toolkit-no-browser; status=$?; npm run test:unit || status=1; exit $status')
         ->and($scripts['test:frontend'][1])->toBe('npm run test:unit');
 });
 

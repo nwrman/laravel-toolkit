@@ -74,6 +74,13 @@ final class Plugin implements AddsOutput, HandlesArguments
 
     private string $command = '';
 
+    /**
+     * The test files a retry re-runs, or null when this run is not a retry.
+     *
+     * @var array<int, string>|null
+     */
+    private ?array $retryFiles = null;
+
     /** @var array<string, mixed> */
     private array $config = [];
 
@@ -207,9 +214,42 @@ final class Plugin implements AddsOutput, HandlesArguments
 
         $this->output->writeln(['', sprintf('  Retrying %d failed test(s) from the failure report.', count($failures))]);
 
-        $files = array_values(array_unique(array_column($failures, 'file')));
+        $this->retryFiles = array_values(array_unique(array_column($failures, 'file')));
+        $path = self::enclosingPath($this->retryFiles);
 
-        return [...$arguments, ...$files, '--filter='.RetryFilter::pattern($failures)];
+        return [...$arguments, ...($path === null ? [] : [$path]), '--filter='.RetryFilter::pattern($failures)];
+    }
+
+    /**
+     * One path that holds every failed file: the file itself, or their closest common
+     * directory. Paratest takes a single path, so a retry can't name one per file; the
+     * anchored filter picks the exact tests, and the path only keeps Pest from loading
+     * test files that hold none of them. Null when the files share no directory.
+     *
+     * @param  array<int, string>  $files
+     */
+    private static function enclosingPath(array $files): ?string
+    {
+        if (count($files) === 1) {
+            return $files[0];
+        }
+
+        $common = explode('/', dirname($files[0]));
+
+        foreach (array_slice($files, 1) as $file) {
+            $segments = explode('/', dirname($file));
+            $length = 0;
+
+            while ($length < count($common) && $length < count($segments) && $common[$length] === $segments[$length]) {
+                $length++;
+            }
+
+            $common = array_slice($common, 0, $length);
+        }
+
+        $path = implode('/', $common);
+
+        return in_array($path, ['', '.'], true) ? null : $path;
     }
 
     /**
@@ -256,6 +296,11 @@ final class Plugin implements AddsOutput, HandlesArguments
         }
 
         $suite = BrowserSuite::in($root);
+
+        // A retry names a directory that may hold Browser specs it won't run.
+        if ($this->retryFiles !== null) {
+            return $suite->directories === [] || array_any($this->retryFiles, fn (string $file): bool => $suite->contains($this->absolute($root, $file)));
+        }
 
         foreach ($arguments as $index => $argument) {
             [$option, $value] = str_contains($argument, '=') ? explode('=', $argument, 2) : [$argument, $arguments[$index + 1] ?? ''];
