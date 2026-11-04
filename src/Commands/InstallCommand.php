@@ -89,6 +89,10 @@ final class InstallCommand extends Command
         $this->info('Installing Laravel Toolkit...');
         $this->newLine();
 
+        // An app that already has the config is upgrading: it chose its optional files
+        // on the first install, so an unattended run publishes none of them.
+        $fresh = ! File::exists(config_path('toolkit.php'));
+
         if (confirm('Move '.self::PACKAGE_NAME.' to require-dev?', true)) {
             $this->moveToRequireDev();
         }
@@ -118,28 +122,28 @@ final class InstallCommand extends Command
 
         $this->removeGuardHook();
 
-        if (confirm('Publish GitHub Actions workflow?', true)) {
+        if (confirm('Publish GitHub Actions workflow?', $fresh)) {
             $this->call('vendor:publish', [
                 '--tag' => 'toolkit-github',
                 '--force' => $this->option('force'),
             ]);
         }
 
-        if (confirm('Publish static analysis configs (pint.json, phpstan.neon)?', true)) {
+        if (confirm('Publish static analysis configs (pint.json, phpstan.neon)?', $fresh)) {
             $this->call('vendor:publish', [
                 '--tag' => 'toolkit-static-analysis',
                 '--force' => $this->option('force'),
             ]);
         }
 
-        if (confirm('Publish deploy notification command (and test)?', true)) {
+        if (confirm('Publish deploy notification command (and test)?', $fresh)) {
             $this->call('vendor:publish', [
                 '--tag' => 'toolkit-commands',
                 '--force' => $this->option('force'),
             ]);
         }
 
-        if (confirm('Publish deployment scripts?', true)) {
+        if (confirm('Publish deployment scripts?', $fresh)) {
             $this->call('vendor:publish', [
                 '--tag' => 'toolkit-scripts',
                 '--force' => $this->option('force'),
