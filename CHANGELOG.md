@@ -2,7 +2,7 @@
 
 All notable changes to `laravel-toolkit` will be documented in this file.
 
-## v1.0.3 — Unreleased
+## v1.0.3 — 2026-11-04
 
 ### Fixes found moving the software factory to v1 (#22)
 
