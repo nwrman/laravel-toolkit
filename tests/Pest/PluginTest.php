@@ -119,6 +119,40 @@ it('retries exactly the failed tests, by file and name', function (): void {
         ->and(reportedFailures($this->project))->toBe(FAILED_IN_FIXTURE);
 });
 
+/**
+ * A second test file that fails beside MathTest.
+ */
+function addFailingFile(string $project): void
+{
+    file_put_contents($project.'/tests/Unit/OtherTest.php', "<?php\n\nit('multiplies', function (): void {\n    expect(failing())->toBeFalse();\n});\n");
+}
+
+it('retries exactly the failed tests of several files', function (): void {
+    addFailingFile($this->project);
+    touch($this->project.'/fail');
+    runPest($this->project);
+
+    expect(runPest($this->project, ['--toolkit-retry'])->getExitCode())->toBe(1)
+        ->and(testsRun($this->project))->toBe([
+            'Tests\\Unit\\MathTest::it counts with data set "dataset "#1 a@b.c""',
+            'Tests\\Unit\\MathTest::it subtracts',
+            'Tests\\Unit\\OtherTest::it multiplies',
+        ]);
+});
+
+it('hands paratest a retry of several files it accepts', function (): void {
+    // Paratest takes one path: a retry that named each failed file never started a test.
+    // The workers themselves can't run here (see the top of this file).
+    addFailingFile($this->project);
+    touch($this->project.'/fail');
+    runPest($this->project);
+
+    $retry = runPest($this->project, ['--parallel', '--processes=2', '--toolkit-retry']);
+
+    expect(plainOutput($retry).$retry->getErrorOutput())->toContain('Retrying 3 failed test(s)')
+        ->not->toContain('Too many arguments');
+});
+
 it('clears the report when the retried tests pass', function (): void {
     touch($this->project.'/fail');
     runPest($this->project);
