@@ -2,6 +2,22 @@
 
 All notable changes to `laravel-toolkit` will be documented in this file.
 
+## v1.0.4 — 2026-11-04
+
+### Fixes (#26)
+
+- **Preflight no longer records Pest's graph inside the coverage gate.** v1.0.3's recording pass is Pest's TIA
+  recorder, which runs Xdebug with no filter: the first preflight after a `composer.lock` change took 722s on the
+  software factory instead of about 3.5 minutes, and Minuta's ran past 11 minutes. v1.0.3 said it cost "about one full
+  run"; that was never measured. Reverted to v1.0.2's behaviour: with no graph, the coverage gate runs every test,
+  filtered by PHPUnit, and the next plain `composer test` records the graph. `tia.record_command` is gone; remove it
+  from a published `config/toolkit.php` if you added it.
+- **A TIA recording run keeps `vendor/` out of Xdebug.** The Pest plugin sets an Xdebug exclude filter for the
+  directories Pest's TIA scope ignores anyway (`vendor`, `node_modules`, `.git`, `storage/framework`,
+  `bootstrap/cache`), outside coverage-report runs, where PHPUnit sets its own. The `composer test` that records the
+  graph after a lock change gets faster: 13.4s to 6.2s on the starter (plain run 4.8s); 505s to 57s on the software
+  factory, as measured in #26. The recorded graph is the same.
+
 ## v1.0.3 — 2026-11-04
 
 ### Fixes found moving the software factory to v1 (#22)
