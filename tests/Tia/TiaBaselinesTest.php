@@ -8,7 +8,6 @@ use Illuminate\Support\Facades\Process;
 use Nwrman\LaravelToolkit\Tia\CoverageStamp;
 use Nwrman\LaravelToolkit\Tia\PestCache;
 use Nwrman\LaravelToolkit\Tia\TiaBaselines;
-use Pest\Plugins\Tia\Fingerprint;
 
 /**
  * A real repository: `main` with a bare `origin`, tickets in their own worktrees.
@@ -313,45 +312,6 @@ it('stamps whether the coverage run included Browser specs', function (bool $wit
 
     expect(CoverageStamp::read(new Filesystem, cacheOf($this->caches, $t1))?->withBrowser)->toBe($withBrowser);
 })->with(['with' => true, 'without' => false]);
-
-/**
- * Rewrites the checkout's graph with the fingerprint Pest computes for it now, changed
- * by $drift, as a graph recorded before those files changed would hold.
- *
- * @param  array<string, string>  $drift
- */
-function fingerprintGraph(string $cacheDir, string $checkout, array $drift = []): void
-{
-    $graph = json_decode(File::get($cacheDir.'/graph.json'), true);
-    $fingerprint = Fingerprint::compute($checkout);
-    $fingerprint['structural'] = [...$fingerprint['structural'], ...$drift];
-    $graph['fingerprint'] = $fingerprint;
-    File::put($cacheDir.'/graph.json', (string) json_encode($graph));
-}
-
-it('finds no graph problem when Pest\'s graph matches the checkout', function (): void {
-    $t1 = ticket($this->repo, 'feature/t1-one');
-    recordRun($this->caches, $t1, 'feature/t1-one', git($t1, 'rev-parse', 'HEAD'));
-    fingerprintGraph(cacheOf($this->caches, $t1), $t1);
-
-    expect($this->baselines->graphProblem($t1))->toBeNull();
-});
-
-it('names why Pest would discard its graph, which a coverage run cannot record', function (array $drift, bool $graph, string $problem): void {
-    $t1 = ticket($this->repo, 'feature/t1-one');
-    recordRun($this->caches, $t1, 'feature/t1-one', git($t1, 'rev-parse', 'HEAD'));
-    fingerprintGraph(cacheOf($this->caches, $t1), $t1, $drift);
-
-    if (! $graph) {
-        File::delete(cacheOf($this->caches, $t1).'/graph.json');
-    }
-
-    expect($this->baselines->graphProblem($t1))->toBe($problem);
-})->with([
-    'no graph' => [[], false, 'Pest has no graph for this checkout'],
-    'composer.lock changed' => [['composer_lock' => 'older'], true, 'composer.lock changed since Pest recorded its graph'],
-    'two files changed' => [['composer_lock' => 'older', 'phpunit_xml' => 'older'], true, 'composer.lock and phpunit.xml changed since Pest recorded its graph'],
-]);
 
 /**
  * What Pest leaves when a coverage run finishes: a coverage cache written just now.

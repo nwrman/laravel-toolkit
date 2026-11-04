@@ -96,13 +96,6 @@ final readonly class Preflight
         $replaysCoverage = $this->tiaEnabled() && $coverageRuns !== [];
         // Whether the coverage run counts Browser specs' hits, which the cache must match.
         $withBrowser = array_any($coverageRuns, fn (array $tokens): bool => ! in_array(Plugin::NO_BROWSER_OPTION, $tokens, true));
-        $graphProblem = $replaysCoverage ? $this->tia->graphProblem($this->root) : null;
-
-        if ($graphProblem !== null) {
-            $gates = $this->recordingGraphFirst($gates, $selected);
-            $this->output->writeln([sprintf('TIA: %s, and a coverage run can\'t record one: the coverage gate records it with a plain run first.', $graphProblem), '']);
-        }
-
         $aligned = $replaysCoverage ? $this->tia->alignCoverage($this->root, $withBrowser) : null;
 
         if ($aligned !== null) {
@@ -502,31 +495,6 @@ final readonly class Preflight
     private function time(array $result): string
     {
         return $result['status'] === self::NOT_RUN ? '–' : number_format($result['duration'], 1).'s';
-    }
-
-    /**
-     * Puts the plain run that records Pest's graph in front of the first selected
-     * coverage gate, in that gate's own process: it gets the gate's environment and
-     * coverage driver, a failure fails that gate, and the other gates run meanwhile.
-     *
-     * @param  array<string, array{label: string, command: string, env: array<string, string>, after: string|null}>  $gates
-     * @param  array<int, string>  $selected
-     * @return array<string, array{label: string, command: string, env: array<string, string>, after: string|null}>
-     */
-    private function recordingGraphFirst(array $gates, array $selected): array
-    {
-        $tia = is_array($this->config['tia'] ?? null) ? $this->config['tia'] : [];
-        $record = is_string($tia['record_command'] ?? null) ? $tia['record_command'] : 'vendor/bin/pest --parallel '.Plugin::NO_BROWSER_OPTION;
-
-        foreach ($selected as $key) {
-            $gate = $gates[$key];
-
-            if ($this->pestCoverageRuns($gate['command']) !== []) {
-                return [...$gates, $key => [...$gate, 'command' => sprintf('%s && %s', $record, $gate['command'])]];
-            }
-        }
-
-        return $gates;
     }
 
     /**
