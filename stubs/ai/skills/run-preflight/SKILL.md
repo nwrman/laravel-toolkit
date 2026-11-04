@@ -28,7 +28,8 @@ This runs the gates in parallel and stops at the first failure, with everything 
 | `lint` | Code formatting + style | `pint --parallel --test && rector --dry-run && bun run test:lint` |
 | `types` | Static analysis + TypeScript | `phpstan && bun run test:types` |
 
-The Pest gates rebuild the frontend assets first when a browser spec could run and `resources/` changed. Use
+The Pest gates rebuild the frontend assets first when a browser spec could run and a watched file (`build.watch_paths`:
+`resources/`, `vite.config.*`, `package.json` and the like) is newer than the last build. Use
 `--force-build` to force a rebuild.
 
 **If all gates pass** → safe to push. Keep the summary table; it is the evidence.
