@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 namespace Nwrman\LaravelToolkit\Tia;
 
+use Composer\InstalledVersions;
 use Illuminate\Filesystem\Filesystem;
 use Illuminate\Process\Factory;
+use Pest\Plugins\Tia\Fingerprint;
 
 /**
  * Hands complete TIA baselines from landed work to new work, so no checkout records
@@ -75,15 +77,68 @@ final readonly class TiaBaselines
     }
 
     /**
+     * Files Pest fingerprints its graph by, as its structural drift names them.
+     */
+    private const array FINGERPRINTED = [
+        'composer_lock' => 'composer.lock',
+        'phpunit_xml' => 'phpunit.xml',
+        'phpunit_xml_dist' => 'phpunit.xml.dist',
+        'vite_config' => 'the Vite config',
+        'package_lock' => 'the JavaScript lockfile',
+        'js_config' => 'the JavaScript config',
+    ];
+
+    /**
+     * Why Pest would run the next coverage gate without a graph, or null when it has a
+     * usable one, or when this Pest's coverage runs record a graph themselves.
+     *
+     * Pest 5 discards its graph when a fingerprinted file such as `composer.lock`
+     * changes, and a coverage run never records one: it runs the whole suite and says
+     * to record with a plain run first. Every preflight after a `composer update`
+     * would then run everything until someone ran a plain `composer test`.
+     */
+    public function graphProblem(string $root): ?string
+    {
+        $pest = InstalledVersions::isInstalled('pestphp/pest') ? InstalledVersions::getVersion('pestphp/pest') : null;
+
+        if ($pest === null || version_compare($pest, '5.0.0.0', '<') || ! class_exists(Fingerprint::class)) {
+            return null;
+        }
+
+        $directory = $this->cache->directory($root);
+        $path = $directory === null ? null : $directory.DIRECTORY_SEPARATOR.BaselineSnapshot::GRAPH;
+        $graph = $path !== null && $this->files->isFile($path) ? json_decode($this->files->get($path), true) : null;
+
+        if (! is_array($graph)) {
+            return 'Pest has no graph for this checkout';
+        }
+
+        /** @var array<string, mixed> $stored */
+        $stored = is_array($graph['fingerprint'] ?? null) ? $graph['fingerprint'] : [];
+        $current = Fingerprint::compute($root);
+
+        if (Fingerprint::structuralMatches($stored, $current)) {
+            return null;
+        }
+
+        $changed = array_map(fn (string $key): string => self::FINGERPRINTED[$key] ?? $key, Fingerprint::structuralDrift($stored, $current));
+
+        return $changed === []
+            ? 'Pest\'s graph is from another TIA version'
+            : sprintf('%s changed since Pest recorded its graph', implode(' and ', $changed));
+    }
+
+    /**
      * Makes the coverage cache safe for the next coverage run, before it starts.
      *
      * A cache from another checkout has its paths moved here. A cache whose commit is
      * known and in this branch's history gets Pest's commit moved back to it, so the run
      * replays every test the commits since can reach. A cache with no known commit, or
-     * one outside the history, is deleted and the run records coverage afresh.
+     * one outside the history, is deleted and the run records coverage afresh, and so
+     * is one that counted Browser specs differently from the coming run ($withBrowser).
      * Returns what it did, or null when the cache was already right.
      */
-    public function alignCoverage(string $root): ?string
+    public function alignCoverage(string $root, bool $withBrowser = false): ?string
     {
         $directory = $this->cache->directory($root);
         $branch = $this->branch($root);
@@ -101,6 +156,15 @@ final readonly class TiaBaselines
             return $stamp instanceof CoverageStamp
                 ? sprintf('TIA: the coverage cache is from %s, outside this branch\'s history. Recording coverage afresh.', mb_substr($stamp->sha, 0, 7))
                 : 'TIA: no record of the commit the coverage cache matches. Recording coverage afresh.';
+        }
+
+        if ($stamp->withBrowser !== $withBrowser) {
+            $this->files->delete($directory.DIRECTORY_SEPARATOR.CoverageCache::FILE);
+            $this->files->delete($directory.DIRECTORY_SEPARATOR.CoverageStamp::FILE);
+
+            return $stamp->withBrowser
+                ? 'TIA: the coverage cache counts Browser specs, and this gate leaves them out. Recording coverage afresh.'
+                : 'TIA: the coverage cache leaves Browser specs out, and this gate runs them. Recording coverage afresh.';
         }
 
         $done = [];
@@ -143,7 +207,7 @@ final readonly class TiaBaselines
      * interrupted, stopped by another gate's failure or fails a test leaves the cache
      * as it was, and the stamp still matches it.
      */
-    public function startCoverageRun(string $root): ?CoverageRun
+    public function startCoverageRun(string $root, bool $withBrowser = false): ?CoverageRun
     {
         $directory = $this->cache->directory($root);
         $sha = $this->git($root, ['rev-parse', 'HEAD']);
@@ -156,7 +220,7 @@ final readonly class TiaBaselines
         $untracked = (string) $this->git($root, ['ls-files', '--others', '--exclude-standard']);
         $dirty = preg_split('/\R/', mb_trim($changed."\n".$untracked), -1, PREG_SPLIT_NO_EMPTY) ?: [];
 
-        return new CoverageRun($directory, new CoverageStamp($this->realRoot($root), $sha, array_fill_keys($dirty, '')), time());
+        return new CoverageRun($directory, new CoverageStamp($this->realRoot($root), $sha, array_fill_keys($dirty, ''), $withBrowser), time());
     }
 
     /**

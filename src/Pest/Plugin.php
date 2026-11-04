@@ -8,6 +8,7 @@ use Illuminate\Filesystem\Filesystem;
 use Illuminate\Process\Factory;
 use Laravel\AgentDetector\AgentDetector;
 use Nwrman\LaravelToolkit\Config\ToolkitConfig;
+use Nwrman\LaravelToolkit\Preflight\Preflight;
 use Nwrman\LaravelToolkit\Report\FailureReport;
 use Nwrman\LaravelToolkit\Support\AssetBuild;
 use Nwrman\LaravelToolkit\Support\Notifier;
@@ -68,6 +69,16 @@ final class Plugin implements AddsOutput, HandlesArguments
         '--mutate', '--profanity', '--migrate-configuration', '--generate-configuration',
     ];
 
+    /**
+     * Options that end a run before every selected test has run, or hand this process
+     * only part of a file's tests. A test such a run did not reach may still exist.
+     */
+    private const array PARTIAL_RUN_OPTIONS = [
+        '--bail', '--stop-on-defect', '--stop-on-error', '--stop-on-failure', '--stop-on-warning',
+        '--stop-on-risky', '--stop-on-deprecation', '--stop-on-notice', '--stop-on-skipped',
+        '--stop-on-incomplete', '--shard',
+    ];
+
     private ?string $junitFile = null;
 
     private int $startedAt = 0;
@@ -80,6 +91,9 @@ final class Plugin implements AddsOutput, HandlesArguments
      * @var array<int, string>|null
      */
     private ?array $retryFiles = null;
+
+    /** @var BackendSection::WHOLE_FILES|BackendSection::RETRY|BackendSection::NARROWED */
+    private string $selection = BackendSection::NARROWED;
 
     /** @var array<string, mixed> */
     private array $config = [];
@@ -120,6 +134,12 @@ final class Plugin implements AddsOutput, HandlesArguments
         $this->command = mb_rtrim('vendor/bin/pest '.implode(' ', array_slice($argv, 1)));
         $report = $this->report($root);
 
+        $this->selection = match (true) {
+            $retry => BackendSection::RETRY,
+            array_any([...Preflight::PARTIAL_SELECTION_FLAGS, ...self::PARTIAL_RUN_OPTIONS], fn (string $flag): bool => $this->hasArgument($flag, $arguments)) => BackendSection::NARROWED,
+            default => BackendSection::WHOLE_FILES,
+        };
+
         if ($retry) {
             $arguments = $this->retryArguments($report, $arguments);
         }
@@ -149,7 +169,7 @@ final class Plugin implements AddsOutput, HandlesArguments
         /** @var array<int, array{file: string, class: string, name: string, line: int, type: string, message: string}> $earlierFailures */
         $earlierFailures = is_array($earlier['failures'] ?? null) ? $earlier['failures'] : [];
         $earlierFailures = array_values(array_filter($earlierFailures, fn (array $failure): bool => is_file($this->absolute($root, $failure['file']))));
-        $section = BackendSection::from($this->junitFile, $this->startedAt, $exitCode, $this->command, $earlierFailures);
+        $section = BackendSection::from($this->junitFile, $this->startedAt, $exitCode, $this->command, $earlierFailures, $this->selection);
         $report->put(FailureReport::BACKEND, $section);
 
         if ($section === null) {

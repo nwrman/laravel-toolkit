@@ -119,10 +119,14 @@ gates inherit the shell's environment.
   Browser specs after the coverage gate, without coverage or Xdebug and on fewer workers; coverage comes from unit and
   feature tests (`--toolkit-no-browser`).
 - **Every gate's row, every time.** `--retry` and `--gate=` print the full table; a gate this run did not run shows its
-  result from the last run that did (`✓ passed, previous run`).
+  result from the last run that did (`✓ passed, previous run`). When only some gates ran, the verdict names the ones
+  that have not passed yet (`✓ Types passed. Not passed yet: Lint.`) and the exit code is 0.
 - **TIA.** With `toolkit.tia.enabled`, preflight lines the coverage cache up with the commit it matches before the
-  coverage gate, and stamps it after a run that rewrote it. It refuses a coverage gate that passes a Pest selection
-  flag (`--exclude-testsuite`, `--group`, `--filter`, …), which would switch TIA off.
+  coverage gate, and stamps it after a run that rewrote it. A cache that counted Browser specs differently from the
+  gate's command (a v0 cache, say) is recorded afresh. On Pest 5, when Pest has no usable graph (after a
+  `composer update`, for one), the coverage gate first runs `tia.record_command`, a plain run that records it: a
+  coverage run can't, and would run the whole suite. It refuses a coverage gate that passes a Pest selection flag
+  (`--exclude-testsuite`, `--group`, `--filter`, …), which would switch TIA off.
 
 ```
 Running 5 gates...

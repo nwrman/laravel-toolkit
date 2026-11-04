@@ -10,6 +10,7 @@ use Nwrman\LaravelToolkit\Preflight\ProcessTree;
 use Nwrman\LaravelToolkit\Tia\CoverageStamp;
 use Nwrman\LaravelToolkit\Tia\PestCache;
 use Nwrman\LaravelToolkit\Tia\TiaBaselines;
+use Pest\Plugins\Tia\Fingerprint;
 use Symfony\Component\Console\Output\BufferedOutput;
 
 /**
@@ -233,6 +234,25 @@ it('shows a gate this run skipped with its result from the last run that ran it'
     $this->process->assertNotRan('run lint');
 });
 
+it('names the gates that have not passed when only some gates ran', function (): void {
+    fakeGates($this->process, ['run lint' => $this->process->describe()->exitCode(1)]);
+    $config = ['gates' => [
+        'lint' => ['label' => 'Lint', 'command' => 'run lint'],
+        'types' => ['label' => 'Types', 'command' => 'run types'],
+        'new' => ['label' => 'New', 'command' => 'run new'],
+    ]];
+    preflight($this, [...$config, 'gates' => array_slice($config['gates'], 0, 2)])->run(retry: false, only: [], forceBuild: false, notify: false);
+    $this->output->fetch();
+    $this->process = new Factory;
+    $this->process->fake();
+
+    $exit = preflight($this, $config)->run(retry: false, only: ['types'], forceBuild: false, notify: false);
+
+    expect($exit)->toBe(0)
+        ->and($this->output->fetch())->not->toContain('All gates passed')
+        ->toContain('✓ Types passed. Not passed yet: Lint, New.');
+});
+
 it('runs nothing on a retry after a run where every gate passed', function (): void {
     $this->process->fake();
     preflight($this, gatesConfig())->run(retry: false, only: [], forceBuild: false, notify: false);
@@ -288,7 +308,7 @@ it('gives gates the shell environment plus vendor/bin, their own env and the pre
 it('refuses a coverage gate that would switch TIA off', function (): void {
     $this->process->fake();
 
-    $exit = preflight($this, ['tia' => ['enabled' => true], 'gates' => [
+    $exit = preflight($this, ['tia' => ['enabled' => true, 'record_command' => 'true'], 'gates' => [
         'pest-coverage' => ['label' => 'Pest Coverage', 'command' => 'vendor/bin/pest --coverage --exclude-testsuite=Browser'],
     ]])->run(retry: false, only: [], forceBuild: false, notify: false);
 
@@ -313,14 +333,14 @@ it('keeps and stamps the coverage a gate saved when it failed only after its tes
     mkdir($this->cache);
 
     // Pest writes the cache only when the tests pass; the coverage minimum fails after.
-    $exit = preflight($this, ['tia' => ['enabled' => true], 'gates' => ['pest-coverage' => [
+    $exit = preflight($this, ['tia' => ['enabled' => true, 'record_command' => 'true'], 'gates' => ['pest-coverage' => [
         'label' => 'Pest Coverage',
         'command' => sprintf('printf fresh | gzip > %s/coverage.bin.gz && echo pest --coverage && exit 1', $this->cache),
     ]]])->run(retry: false, only: [], forceBuild: false, notify: false);
 
     expect($exit)->toBe(1)
         ->and(gzdecode((string) file_get_contents($this->cache.'/coverage.bin.gz')))->toBe('fresh')
-        ->and(CoverageStamp::read(new Filesystem, $this->cache))->toEqual(new CoverageStamp($this->root, $sha, []));
+        ->and(CoverageStamp::read(new Filesystem, $this->cache))->toEqual(new CoverageStamp($this->root, $sha, [], withBrowser: true));
 });
 
 it('lines the coverage cache up before a TIA coverage gate runs', function (): void {
@@ -328,7 +348,7 @@ it('lines the coverage cache up before a TIA coverage gate runs', function (): v
     mkdir($this->cache);
     file_put_contents($this->cache.'/coverage.bin.gz', (string) gzencode('unstamped'));
 
-    preflight($this, ['tia' => ['enabled' => true], 'gates' => ['pest-coverage' => [
+    preflight($this, ['tia' => ['enabled' => true, 'record_command' => 'true'], 'gates' => ['pest-coverage' => [
         'label' => 'Pest Coverage',
         'command' => sprintf('test ! -e %s/coverage.bin.gz && echo pest --coverage', $this->cache),
     ]]])->run(retry: false, only: [], forceBuild: false, notify: false);
@@ -336,6 +356,46 @@ it('lines the coverage cache up before a TIA coverage gate runs', function (): v
     expect($this->output->fetch())->toContain('TIA: no record of the commit the coverage cache matches. Recording coverage afresh.')
         ->toContain('✓ All gates passed!');
 });
+
+it('records coverage afresh when the cache counted Browser specs differently from the coverage gate', function (?bool $cachedWithBrowser, string $flag, string $message): void {
+    $sha = repositoryAt($this->root);
+    mkdir($this->cache);
+    file_put_contents($this->cache.'/coverage.bin.gz', (string) gzencode('recorded before'));
+    // A v0 stamp has no browser field.
+    file_put_contents($this->cache.'/'.CoverageStamp::FILE, (string) json_encode(['root' => $this->root, 'sha' => $sha, 'tree' => (object) [], ...($cachedWithBrowser === null ? [] : ['browser' => $cachedWithBrowser])]));
+
+    preflight($this, ['tia' => ['enabled' => true, 'record_command' => 'true'], 'gates' => ['pest-coverage' => [
+        'label' => 'Pest Coverage',
+        'command' => sprintf('test ! -e %s/coverage.bin.gz && echo pest --coverage%s', $this->cache, $flag),
+    ]]])->run(retry: false, only: [], forceBuild: false, notify: false);
+
+    expect($this->output->fetch())->toContain($message)
+        ->toContain('✓ All gates passed!');
+})->with([
+    'a v0 cache, a gate without Browser specs' => [null, ' --toolkit-no-browser', 'TIA: the coverage cache counts Browser specs, and this gate leaves them out.'],
+    'a cache without them, a gate that runs them' => [false, '', 'TIA: the coverage cache leaves Browser specs out, and this gate runs them.'],
+]);
+
+it('records Pest\'s graph with a plain run before a coverage gate that could not', function (bool $graph, bool $records): void {
+    repositoryAt($this->root);
+    mkdir($this->cache);
+
+    if ($graph) {
+        file_put_contents($this->cache.'/graph.json', (string) json_encode(['fingerprint' => Fingerprint::compute($this->root), 'baselines' => (object) []]));
+    }
+
+    $exit = preflight($this, ['tia' => ['enabled' => true, 'record_command' => sprintf('touch %s/recorded', $this->root)], 'gates' => ['pest-coverage' => [
+        'label' => 'Pest Coverage',
+        'command' => 'echo pest --coverage --toolkit-no-browser',
+    ]]])->run(retry: false, only: [], forceBuild: false, notify: false);
+
+    expect($exit)->toBe(0)
+        ->and(file_exists($this->root.'/recorded'))->toBe($records);
+
+    if ($records) {
+        expect($this->output->fetch())->toContain('TIA: Pest has no graph for this checkout, and a coverage run can\'t record one: the coverage gate records it with a plain run first.');
+    }
+})->with(['no graph' => [false, true], 'a usable graph' => [true, false]]);
 
 it('prints each gate\'s result as it finishes for an agent, which has no live display', function (): void {
     fakeGates($this->process, ['run lint' => $this->process->describe()->exitCode(1)]);

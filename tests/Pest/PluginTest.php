@@ -205,6 +205,44 @@ it('drops an earlier failure whose test file is gone', function (): void {
     expect(file_exists($this->project.'/storage/logs/test-failures.json'))->toBeFalse();
 });
 
+/**
+ * Renames MathTest's "subtracts" test, as an edit to the spec would.
+ */
+function renameSubtracts(string $project): void
+{
+    $file = $project.'/tests/Unit/MathTest.php';
+    file_put_contents($file, str_replace("it('subtracts',", "it('takes away',", (string) file_get_contents($file)));
+}
+
+it('drops an earlier failure whose test is gone once its file runs unfiltered', function (): void {
+    touch($this->project.'/fail');
+    runPest($this->project);
+    unlink($this->project.'/fail');
+    renameSubtracts($this->project);
+
+    expect(runPest($this->project)->getExitCode())->toBe(0)
+        ->and(file_exists($this->project.'/storage/logs/test-failures.json'))->toBeFalse();
+});
+
+it('keeps the earlier failures a run that stopped early never reached', function (): void {
+    touch($this->project.'/fail');
+    runPest($this->project, ['--order-by=default']);
+
+    runPest($this->project, ['--bail', '--order-by=default']);
+
+    expect(reportedFailures($this->project))->toBe(FAILED_IN_FIXTURE);
+});
+
+it('drops a retried failure whose test is gone, and keeps the ones that still fail', function (): void {
+    touch($this->project.'/fail');
+    runPest($this->project);
+    renameSubtracts($this->project);
+
+    runPest($this->project, ['--toolkit-retry']);
+
+    expect(reportedFailures($this->project))->toBe([FAILED_IN_FIXTURE[1]]);
+});
+
 it('retries nothing, and clears the report, when every failed test file is gone', function (): void {
     touch($this->project.'/fail');
     runPest($this->project);

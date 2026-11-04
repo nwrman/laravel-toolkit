@@ -28,6 +28,66 @@ it('runs the install command and publishes config', function (): void {
         ->assertExitCode(0);
 });
 
+/**
+ * What a non-interactive install publishes of the files an app may not want, with
+ * config/toolkit.php present (an upgrade) or not (a fresh install).
+ *
+ * @return array<string, bool>
+ */
+function optionalPublishes(bool $upgrade): array
+{
+    $optional = [
+        'workflow' => base_path('.github/workflows/tests.yml'),
+        'phpstan' => base_path('phpstan.neon'),
+        'deploy command' => app_path('Console/Commands/DeployNotifyTelegramCommand.php'),
+        'deploy scripts' => base_path('scripts/cloud-build.sh'),
+    ];
+    $backups = [];
+
+    foreach ([base_path('composer.json'), base_path('pint.json'), config_path('toolkit.php')] as $file) {
+        $backups[$file] = File::exists($file) ? File::get($file) : null;
+    }
+
+    $upgrade ? File::put(config_path('toolkit.php'), "<?php\n\nreturn [];\n") : File::delete(config_path('toolkit.php'));
+
+    try {
+        expect(test()->withoutMockingConsoleOutput()->artisan('toolkit:install', ['--no-interaction' => true]))->toBe(0);
+
+        return array_map(fn (string $file): bool => File::exists($file), $optional);
+    } finally {
+        foreach ($optional as $file) {
+            File::delete($file);
+        }
+
+        File::deleteDirectory(base_path('.github'));
+        File::deleteDirectory(base_path('scripts'));
+        File::deleteDirectory(base_path('.ai'));
+        File::delete(base_path('tests/Feature/Console/Commands/DeployNotifyTelegramCommandTest.php'));
+
+        foreach ($backups as $file => $contents) {
+            $contents === null ? File::delete($file) : File::put($file, $contents);
+        }
+    }
+}
+
+it('publishes nothing optional on a non-interactive upgrade', function (): void {
+    expect(optionalPublishes(upgrade: true))->toBe([
+        'workflow' => false,
+        'phpstan' => false,
+        'deploy command' => false,
+        'deploy scripts' => false,
+    ]);
+});
+
+it('publishes the optional files on a non-interactive fresh install', function (): void {
+    expect(optionalPublishes(upgrade: false))->toBe([
+        'workflow' => true,
+        'phpstan' => true,
+        'deploy command' => true,
+        'deploy scripts' => true,
+    ]);
+});
+
 it('merges composer scripts into composer.json', function (): void {
     $composerPath = base_path('composer.json');
     $originalContent = File::exists($composerPath) ? File::get($composerPath) : null;

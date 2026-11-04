@@ -79,8 +79,12 @@ suite; an unchanged tree runs nothing; a comment-only edit or a formatter pass r
 - **Preflight keeps the coverage cache honest.** Before the coverage gate it moves Pest's commit back to the one the
   coverage cache matches (a plain `composer test` moves it on without updating coverage), moves a cache recorded in
   another checkout to this one, takes every file changed since out of the cache so the run covers it afresh, and
-  deletes a cache it cannot place. It prints a `TIA:` line when it does any of these. Only a coverage run writes
-  coverage, so `composer test` never repairs it.
+  deletes a cache it cannot place or one that counted browser specs differently from the gate. It prints a `TIA:`
+  line when it does any of these. Only a coverage run writes coverage, so `composer test` never repairs it.
+- **Preflight records a missing graph itself.** Pest drops its graph when `composer.lock` and the other files below
+  change, and a coverage run can't record one. Preflight then runs a plain recording pass at the start of the coverage
+  gate and says so in a `TIA:` line. That first preflight takes about one full run; don't run `composer test` first to
+  "warm" it.
 - The graph lives outside the repo in `~/.pest/tia/` and rebuilds itself when `composer.lock`, `phpunit.xml`, the vite
   config or the node lockfile change. Nothing to gitignore.
 - If a coverage number still looks wrong — a percentage that will not move, or a file you never touched reported as

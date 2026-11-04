@@ -41,7 +41,7 @@ final readonly class Preflight
      * Pest's partial-selection flags (`Pest\Plugins\Tia::PARTIAL_SELECTION_FLAGS`).
      * Any one of them makes Pest switch TIA off for the run.
      */
-    private const array PARTIAL_SELECTION_FLAGS = [
+    public const array PARTIAL_SELECTION_FLAGS = [
         '--filter', '--exclude-filter', '--group', '--exclude-group',
         '--covers', '--uses', '--testsuite', '--exclude-testsuite', '--test-suffix',
         '--dirty', '--todo', '--todos', '--flaky', '--notes',
@@ -92,14 +92,24 @@ final readonly class Preflight
         $this->output->writeln(sprintf('<info>Running %d gate%s...</info>', $count, $count === 1 ? '' : 's'));
         $this->output->writeln('');
 
-        $replaysCoverage = $this->tiaEnabled() && array_any($selected, fn (string $key): bool => $this->pestCoverageRuns($gates[$key]['command']) !== []);
-        $aligned = $replaysCoverage ? $this->tia->alignCoverage($this->root) : null;
+        $coverageRuns = array_merge(...array_map(fn (string $key): array => $this->pestCoverageRuns($gates[$key]['command']), $selected));
+        $replaysCoverage = $this->tiaEnabled() && $coverageRuns !== [];
+        // Whether the coverage run counts Browser specs' hits, which the cache must match.
+        $withBrowser = array_any($coverageRuns, fn (array $tokens): bool => ! in_array(Plugin::NO_BROWSER_OPTION, $tokens, true));
+        $graphProblem = $replaysCoverage ? $this->tia->graphProblem($this->root) : null;
+
+        if ($graphProblem !== null) {
+            $gates = $this->recordingGraphFirst($gates, $selected);
+            $this->output->writeln([sprintf('TIA: %s, and a coverage run can\'t record one: the coverage gate records it with a plain run first.', $graphProblem), '']);
+        }
+
+        $aligned = $replaysCoverage ? $this->tia->alignCoverage($this->root, $withBrowser) : null;
 
         if ($aligned !== null) {
             $this->output->writeln([$aligned, '']);
         }
 
-        $coverageRun = $replaysCoverage ? $this->tia->startCoverageRun($this->root) : null;
+        $coverageRun = $replaysCoverage ? $this->tia->startCoverageRun($this->root, $withBrowser) : null;
         $results = $this->runGates($gates, $selected, $forceBuild);
 
         if ($coverageRun !== null) {
@@ -123,6 +133,19 @@ final readonly class Preflight
             $notifier->notify('Preflight', 'A gate failed ✗', 'Basso');
 
             return 1;
+        }
+
+        // A run of some gates passes when they do, but the others' last results stand.
+        $notPassed = array_values(array_filter(
+            array_keys($gates),
+            fn (string $key): bool => ($results[$key]['status'] ?? $previous[$key]['status'] ?? null) !== self::PASS,
+        ));
+
+        if ($notPassed !== []) {
+            $this->output->writeln(['', sprintf('<info>✓ %s passed.</info> <comment>Not passed yet: %s.</comment>', $this->labels($gates, array_keys($results)), $this->labels($gates, $notPassed))]);
+            $notifier->notify('Preflight', 'The selected gates passed ✓', 'Glass');
+
+            return 0;
         }
 
         $this->output->writeln(['', '<info>✓ All gates passed!</info>']);
@@ -443,6 +466,15 @@ final readonly class Preflight
         (new Table($this->output))->setHeaders(['Gate', 'Status', 'Time'])->setRows($rows)->render();
     }
 
+    /**
+     * @param  array<string, array{label: string, command: string, env: array<string, string>, after: string|null}>  $gates
+     * @param  array<int, string>  $keys
+     */
+    private function labels(array $gates, array $keys): string
+    {
+        return implode(', ', array_map(fn (string $key): string => $gates[$key]['label'], $keys));
+    }
+
     private function statusLabel(string $status, bool $previousRun): string
     {
         $label = match ($status) {
@@ -470,6 +502,31 @@ final readonly class Preflight
     private function time(array $result): string
     {
         return $result['status'] === self::NOT_RUN ? '–' : number_format($result['duration'], 1).'s';
+    }
+
+    /**
+     * Puts the plain run that records Pest's graph in front of the first selected
+     * coverage gate, in that gate's own process: it gets the gate's environment and
+     * coverage driver, a failure fails that gate, and the other gates run meanwhile.
+     *
+     * @param  array<string, array{label: string, command: string, env: array<string, string>, after: string|null}>  $gates
+     * @param  array<int, string>  $selected
+     * @return array<string, array{label: string, command: string, env: array<string, string>, after: string|null}>
+     */
+    private function recordingGraphFirst(array $gates, array $selected): array
+    {
+        $tia = is_array($this->config['tia'] ?? null) ? $this->config['tia'] : [];
+        $record = is_string($tia['record_command'] ?? null) ? $tia['record_command'] : 'vendor/bin/pest --parallel '.Plugin::NO_BROWSER_OPTION;
+
+        foreach ($selected as $key) {
+            $gate = $gates[$key];
+
+            if ($this->pestCoverageRuns($gate['command']) !== []) {
+                return [...$gates, $key => [...$gate, 'command' => sprintf('%s && %s', $record, $gate['command'])]];
+            }
+        }
+
+        return $gates;
     }
 
     /**

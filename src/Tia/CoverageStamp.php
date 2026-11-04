@@ -16,6 +16,11 @@ use Illuminate\Filesystem\Filesystem;
  * cache. After a plain `composer test`, a coverage replay skips the tests that cover
  * the commits in between and reads their lines from a cache that predates them. The
  * stamp is the cache's own commit, so preflight can move Pest's back to it.
+ *
+ * It also says whether the run counted Browser specs' hits. A cache from a run that
+ * did, read by a gate that leaves them out, reports lines only a Browser spec covers
+ * as covered. A stamp from before v1 has no such field: v0's coverage gate ran every
+ * suite, so it counted them.
  */
 final readonly class CoverageStamp
 {
@@ -28,6 +33,7 @@ final readonly class CoverageStamp
         public string $root,
         public string $sha,
         public array $tree,
+        public bool $withBrowser = false,
     ) {}
 
     public static function read(Filesystem $files, string $directory): ?self
@@ -47,12 +53,12 @@ final readonly class CoverageStamp
         /** @var array<string, string> $tree */
         $tree = is_array($stamp['tree'] ?? null) ? $stamp['tree'] : [];
 
-        return new self($stamp['root'], $stamp['sha'], $tree);
+        return new self($stamp['root'], $stamp['sha'], $tree, (bool) ($stamp['browser'] ?? true));
     }
 
     public function withRoot(string $root): self
     {
-        return new self($root, $this->sha, $this->tree);
+        return new self($root, $this->sha, $this->tree, $this->withBrowser);
     }
 
     public function writeTo(Filesystem $files, string $directory): void
@@ -62,6 +68,7 @@ final readonly class CoverageStamp
             'root' => $this->root,
             'sha' => $this->sha,
             'tree' => (object) $this->tree,
+            'browser' => $this->withBrowser,
         ], JSON_UNESCAPED_SLASHES));
     }
 }
