@@ -189,6 +189,16 @@ final class Plugin implements AddsOutput, HandlesArguments
         /** @var array<int, array{file: string, class: string, name: string}> $failures */
         $failures = is_array($section['failures'] ?? null) ? $section['failures'] : [];
 
+        // A failed test whose file is gone can't be re-run: naming the file would stop Pest
+        // before any test ran, and leave a crash notice in the report.
+        $root = TestSuite::getInstance()->rootPath;
+        $recorded = $failures;
+        $failures = array_values(array_filter($failures, fn (array $failure): bool => is_file($this->absolute($root, $failure['file']))));
+
+        if ($failures === [] && $recorded !== []) {
+            $report->put(FailureReport::BACKEND, null);
+        }
+
         if ($failures === []) {
             $this->output->writeln(['', '  No failed backend tests in the failure report: nothing to retry.', '']);
 

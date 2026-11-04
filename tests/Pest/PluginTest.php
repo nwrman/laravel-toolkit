@@ -171,6 +171,18 @@ it('drops an earlier failure whose test file is gone', function (): void {
     expect(file_exists($this->project.'/storage/logs/test-failures.json'))->toBeFalse();
 });
 
+it('retries nothing, and clears the report, when every failed test file is gone', function (): void {
+    touch($this->project.'/fail');
+    runPest($this->project);
+    rename($this->project.'/tests/Unit/MathTest.php', $this->project.'/tests/Unit/ArithmeticTest.php');
+
+    $retry = runPest($this->project, ['--toolkit-retry']);
+
+    expect($retry->getExitCode())->toBe(0)
+        ->and(plainOutput($retry))->toContain('No failed backend tests in the failure report: nothing to retry.')
+        ->and(file_exists($this->project.'/storage/logs/test-failures.json'))->toBeFalse();
+});
+
 it('leaves the report and JUnit file alone in a Pest run another reporting run started', function (): void {
     touch($this->project.'/fail');
     runPest($this->project);
