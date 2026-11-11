@@ -142,12 +142,12 @@ final readonly class TiaBaselines
             $done[] = sprintf('moved the coverage cache\'s paths from %s', $stamp->root);
         }
 
-        if ($rewind && $this->rewindGraph($directory, $branch, $stamp)) {
-            $done[] = sprintf('replaying from %s, the commit the coverage cache matches', mb_substr($stamp->sha, 0, 7));
-        }
-
-        $changed = array_map(fn (string $path): string => $here.DIRECTORY_SEPARATOR.$path, $this->changedSince($root, $stamp));
-        $forgotten = $changed === [] ? 0 : CoverageCache::forget($this->files, $directory.DIRECTORY_SEPARATOR.CoverageCache::FILE, $changed);
+        $changed = $this->changedSince($root, $stamp);
+        $forgotten = $changed === [] ? [] : CoverageCache::forget(
+            $this->files,
+            $directory.DIRECTORY_SEPARATOR.CoverageCache::FILE,
+            array_map(fn (string $path): string => $here.DIRECTORY_SEPARATOR.$path, $changed),
+        );
 
         if ($forgotten === null) {
             $this->files->delete($directory.DIRECTORY_SEPARATOR.CoverageCache::FILE);
@@ -156,8 +156,14 @@ final readonly class TiaBaselines
             return 'TIA: the coverage cache could not be read. Recording coverage afresh.';
         }
 
-        if ($forgotten > 0) {
-            $done[] = sprintf('re-covering %d changed file%s', $forgotten, $forgotten === 1 ? '' : 's');
+        $forgotten = array_map(fn (string $path): string => mb_substr($path, mb_strlen($here) + 1), $forgotten);
+
+        if ($rewind && $this->rewindGraph($directory, $branch, $stamp->sha, $this->replayTree($root, $stamp, $changed, $forgotten))) {
+            $done[] = sprintf('replaying from %s, the commit the coverage cache matches', mb_substr($stamp->sha, 0, 7));
+        }
+
+        if ($forgotten !== []) {
+            $done[] = sprintf('re-covering %d changed file%s', count($forgotten), count($forgotten) === 1 ? '' : 's');
         }
 
         return $done === [] ? null : 'TIA: '.implode('; ', $done).'.';
@@ -216,9 +222,9 @@ final readonly class TiaBaselines
 
     /**
      * Notes what a coverage gate covers before it runs: the checked-out commit, plus
-     * every file that differs from it, with what it holds as Pest hashes it. The next
-     * run replays and re-covers such a file only if it changed after this one started;
-     * a deleted file has an empty hash, which matches no file, so it is always replayed.
+     * every file that differs from it, with a hash of what it holds. The next run
+     * re-covers such a file only if it changed after this one started; a deleted file
+     * has an empty hash, which matches no file, so it is always re-covered.
      *
      * The cache's current stamp stays where it is. Pest writes the coverage cache only
      * when the tests passed (its coverage report runs on exit 0 only), so a run that is
@@ -284,22 +290,50 @@ final readonly class TiaBaselines
     }
 
     /**
-     * What each file holds, hashed as Pest's TIA hashes it, so a stamp Pest is handed
-     * compares equal to the tree Pest records itself. Pest's hash ignores what can't
-     * change behaviour, such as comments. A deleted or unreadable file hashes to ''.
+     * A hash of each file's bytes, comments included: a comment moves the line numbers
+     * the coverage cache holds, so it is a change here. A deleted or unreadable file
+     * hashes to ''.
      *
      * @param  array<int, string>  $files
      * @return array<string, string>
      */
     private function contentHashes(string $root, array $files): array
     {
-        return [...array_fill_keys($files, ''), ...new ChangedFiles($root)->snapshotTree($files)];
+        $hashes = [];
+
+        foreach ($files as $file) {
+            $absolute = $root.DIRECTORY_SEPARATOR.$file;
+            $hashes[$file] = is_file($absolute) ? (string) hash_file('xxh128', $absolute) : '';
+        }
+
+        return $hashes;
     }
 
     /**
-     * Moves Pest's commit for $branch back to the stamp's. Returns whether it moved.
+     * The tree Pest's next replay compares the working tree against, so that it runs
+     * exactly the tests the coverage cache is missing. A file still as the stamp found
+     * it gets Pest's own hash, which Pest matches and skips. A file whose coverage was
+     * just forgotten gets '', which matches nothing, so Pest replays every test that
+     * touches it, even when Pest itself would see no change, as after a comment edit.
+     *
+     * @param  array<int, string>  $changed
+     * @param  array<int, string>  $forgotten
+     * @return array<string, string>
      */
-    private function rewindGraph(string $directory, string $branch, CoverageStamp $stamp): bool
+    private function replayTree(string $root, CoverageStamp $stamp, array $changed, array $forgotten): array
+    {
+        $unchanged = array_values(array_diff(array_keys($stamp->tree), $changed));
+
+        return [...new ChangedFiles($root)->snapshotTree($unchanged), ...array_fill_keys($forgotten, '')];
+    }
+
+    /**
+     * Gives Pest's baseline for $branch the stamp's commit and $tree. Returns whether the
+     * commit moved; a tree that differs is written either way.
+     *
+     * @param  array<string, string>  $tree
+     */
+    private function rewindGraph(string $directory, string $branch, string $sha, array $tree): bool
     {
         $path = $directory.DIRECTORY_SEPARATOR.BaselineSnapshot::GRAPH;
         $graph = $this->files->isFile($path) ? json_decode($this->files->get($path), true) : null;
@@ -311,15 +345,16 @@ final readonly class TiaBaselines
         // A branch with no baseline of its own runs on its base's, so it gets one that
         // carries only the commit; its results still come from the base.
         $baseline = is_array($graph['baselines'][$branch] ?? null) ? $graph['baselines'][$branch] : ['results' => []];
+        $moved = ($baseline['sha'] ?? null) !== $sha;
 
-        if (($baseline['sha'] ?? null) === $stamp->sha && ($baseline['tree'] ?? []) == $stamp->tree) {
+        if (! $moved && ($baseline['tree'] ?? []) == $tree) {
             return false;
         }
 
-        $graph['baselines'][$branch] = [...$baseline, 'sha' => $stamp->sha, 'tree' => (object) $stamp->tree];
+        $graph['baselines'][$branch] = [...$baseline, 'sha' => $sha, 'tree' => (object) $tree];
         $this->files->put($path, (string) json_encode($graph, JSON_UNESCAPED_SLASHES));
 
-        return true;
+        return $moved;
     }
 
     /**

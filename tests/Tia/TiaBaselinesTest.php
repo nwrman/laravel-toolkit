@@ -370,7 +370,7 @@ function rewriteCoverage(string $cacheDir): void
     File::put($cacheDir.'/coverage.bin.gz', (string) gzencode(serialize(['rewritten' => true])));
 }
 
-it('stamps a cache the gate rewrote with the commit it covered and what each uncommitted file held', function (): void {
+it('stamps a cache the gate rewrote with the commit it covered and a hash of each uncommitted file', function (): void {
     $t1 = ticket($this->repo, 'feature/t1-one');
     $sha = git($t1, 'rev-parse', 'HEAD');
     File::put($t1.'/Dirty.php', '<?php');
@@ -379,8 +379,7 @@ it('stamps a cache the gate rewrote with the commit it covered and what each unc
     rewriteCoverage(cacheOf($this->caches, $t1));
     $this->baselines->finishCoverageRun($run);
 
-    expect(CoverageStamp::read(new Filesystem, cacheOf($this->caches, $t1)))
-        ->toEqual(new CoverageStamp($t1, $sha, new ChangedFiles($t1)->snapshotTree(['Dirty.php'])));
+    expect(CoverageStamp::read(new Filesystem, cacheOf($this->caches, $t1)))->toEqual(new CoverageStamp($t1, $sha, ['Dirty.php' => '50774ceda4afaf83d5906e79e9acd0b1']));
 });
 
 /**
@@ -417,6 +416,16 @@ it('does not replay or re-cover an uncommitted file the last coverage run alread
     expect($this->baselines->alignCoverage($t1))->toBeNull()
         ->and(replayedByPest($this->caches, $t1, 'feature/t1-one', ['app/Uncommitted.php']))->toBe([])
         ->and(cachedLines(cacheOf($this->caches, $t1).'/coverage.bin.gz'))->toBe([$t1.'/app/Uncommitted.php' => [3 => ['t1']]]);
+});
+
+it('replays the tests of an uncommitted file whose comments changed, so its coverage is filled back in', function (): void {
+    $t1 = ticket($this->repo, 'feature/t1-one');
+    coverUncommitted($this->baselines, $this->caches, $t1, 'feature/t1-one', "<?php\n\nreturn 1;\n");
+    File::put($t1.'/app/Uncommitted.php', "<?php\n// a note that moves every line below it\n\nreturn 1;\n");
+
+    expect($this->baselines->alignCoverage($t1))->toBe('TIA: re-covering 1 changed file.')
+        ->and(replayedByPest($this->caches, $t1, 'feature/t1-one', ['app/Uncommitted.php']))->toBe(['app/Uncommitted.php'])
+        ->and(cachedLines(cacheOf($this->caches, $t1).'/coverage.bin.gz'))->toBe([]);
 });
 
 it('replays and re-covers an uncommitted file edited since the last coverage run', function (): void {
@@ -463,7 +472,7 @@ it('stamps the commit the run started on even when the checkout moved during it'
     expect(CoverageStamp::read(new Filesystem, cacheOf($this->caches, $t1)))->toEqual(new CoverageStamp($t1, $startedOn, []));
 });
 
-it('re-covers the files changed since the stamp, so their old line numbers cannot linger', function (): void {
+it('re-covers the files changed since the stamp and replays their tests, so their old line numbers cannot linger', function (): void {
     $t1 = ticket($this->repo, 'feature/t1-one');
     recordRun($this->caches, $t1, 'feature/t1-one', git($t1, 'rev-parse', 'HEAD'));
     coverageCacheFile(cacheOf($this->caches, $t1).'/coverage.bin.gz', [
@@ -479,5 +488,6 @@ it('re-covers the files changed since the stamp, so their old line numbers canno
     File::put($t1.'/app/Uncommitted.php', '<?php');
 
     expect($this->baselines->alignCoverage($t1))->toBe('TIA: re-covering 2 changed files.')
-        ->and(cachedLines(cacheOf($this->caches, $t1).'/coverage.bin.gz'))->toBe([$t1.'/app/Unchanged.php' => [8 => ['t3']]]);
+        ->and(cachedLines(cacheOf($this->caches, $t1).'/coverage.bin.gz'))->toBe([$t1.'/app/Unchanged.php' => [8 => ['t3']]])
+        ->and(replayedByPest($this->caches, $t1, 'feature/t1-one', []))->toBe(['app/Committed.php', 'app/Uncommitted.php']);
 });

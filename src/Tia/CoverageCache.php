@@ -66,18 +66,20 @@ final class CoverageCache
     }
 
     /**
-     * Removes $paths from the cache, and returns how many it held, or null when the cache
+     * Removes $paths from the cache, and returns the ones it held, or null when the cache
      * cannot be read.
      *
      * Pest merges a run's coverage into the cache line by line. When a file changed, the
      * cache still holds the old version's line numbers: a line that was code then and is
      * a comment or a closing bracket now stays "executable, not covered", because the new
-     * run never writes that line. Removing a changed file lets the run fill it in whole;
-     * TIA replays every test that touches it.
+     * run never writes that line. Removing a changed file lets the run fill it in whole,
+     * but only from the tests that run: the caller makes TIA replay every test that
+     * touches each file returned, or it stays uncovered.
      *
      * @param  array<int, string>  $paths
+     * @return list<string>|null
      */
-    public static function forget(Filesystem $files, string $file, array $paths): ?int
+    public static function forget(Filesystem $files, string $file, array $paths): ?array
     {
         $bytes = @gzdecode($files->get($file));
         $coverage = $bytes === false ? null : @unserialize($bytes);
@@ -92,14 +94,14 @@ final class CoverageCache
         $held = array_intersect_key($lines, array_flip($paths));
 
         if ($held === []) {
-            return 0;
+            return [];
         }
 
         $data->setLineCoverage(array_diff_key($lines, $held));
         $data->setFunctionCoverage(array_diff_key($functions, $held));
         $files->put($file, (string) gzencode(serialize($coverage)));
 
-        return count($held);
+        return array_map(strval(...), array_keys($held));
     }
 
     /**
