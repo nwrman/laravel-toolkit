@@ -2,7 +2,12 @@
 
 All notable changes to `laravel-toolkit` will be documented in this file.
 
-## v1.1.0 — unreleased
+## v1.1.0 — 2026-11-11
+
+### Breaking
+
+- **Pest 5 only.** The constraints were `^4.0||^5.0`, left over from the first release; every app on the toolkit runs
+  Pest 5. The coverage gate's full-run note loses its Pest 4 wording.
 
 ### Fixes found benchmarking Minuta's preflight
 
@@ -17,10 +22,15 @@ All notable changes to `laravel-toolkit` will be documented in this file.
 - **A coverage cache kept by an older toolkit is recorded afresh, once.** It can already lack files for the reason
   above. The first coverage gate after the upgrade runs every test and prints a `TIA:` line saying why.
 
-### Breaking
+### Failure report fixes
 
-- **Pest 5 only.** The constraints were `^4.0||^5.0`, left over from the first release; every app on the toolkit runs
-  Pest 5. The coverage gate's full-run note loses its Pest 4 wording.
+- **A renamed or deleted Vitest test leaves the failure report.** The reporter kept an earlier failure whenever its file
+  existed and that exact name had not run, so a renamed test's failure stayed forever: `Failed: 1` beside a Vitest run
+  with every test passing. A run of whole files now drops an earlier failure from a file it ran, as the backend
+  section does.
+- **A filtered Vitest re-run keeps the other failures.** Vitest reports the tests a `-t` filter leaves out as skipped,
+  and the reporter counted them as run, so re-running one test erased the others' failures while they still failed.
+  `composer test:retry`'s frontend half marks its run as a retry, which drops only the earlier failures it did not run.
 
 ## v1.0.5 — 2026-11-04
 

@@ -20,5 +20,6 @@ const args = ['run', ...files, ...(names.length > 0 && !wholeFile ? ['-t', `^(?:
 
 console.log(`\n  Retrying ${failures.length} failed frontend test(s) from the failure report.\n`);
 
-const result = spawnSync(resolve('node_modules/.bin/vitest'), args, { stdio: 'inherit' });
+// Tells the reporter this run is a retry, which drops an earlier failure it did not run.
+const result = spawnSync(resolve('node_modules/.bin/vitest'), args, { stdio: 'inherit', env: { ...process.env, TOOLKIT_VITEST_RETRY: '1' } });
 process.exit(result.status ?? 1);
