@@ -332,6 +332,16 @@ it('deletes a coverage cache it cannot place, so the run records coverage afresh
     'a commit outside the branch' => [true, 'TIA: the coverage cache is from %s, outside this branch\'s history. Recording coverage afresh.'],
 ]);
 
+it('records coverage afresh over a cache stamped by an older toolkit', function (): void {
+    $t1 = ticket($this->repo, 'feature/t1-one');
+    recordRun($this->caches, $t1, 'feature/t1-one', $sha = git($t1, 'rev-parse', 'HEAD'));
+    File::put(cacheOf($this->caches, $t1).'/toolkit-coverage.json', (string) json_encode(['root' => $t1, 'sha' => $sha, 'tree' => ['app/Dirty.php' => ''], 'browser' => false]));
+
+    expect($this->baselines->alignCoverage($t1))->toBe('TIA: the coverage cache was kept by an older toolkit, which could leave files out of it. Recording coverage afresh.')
+        ->and(File::exists(cacheOf($this->caches, $t1).'/coverage.bin.gz'))->toBeFalse()
+        ->and(File::exists(cacheOf($this->caches, $t1).'/toolkit-coverage.json'))->toBeFalse();
+});
+
 it('deletes a coverage cache recorded with Browser specs before a gate that leaves them out', function (): void {
     $t1 = ticket($this->repo, 'feature/t1-one');
     $sha = git($t1, 'rev-parse', 'HEAD');

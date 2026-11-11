@@ -83,7 +83,8 @@ final readonly class TiaBaselines
      * known and in this branch's history gets Pest's commit moved back to it, so the run
      * replays every test the commits since can reach. A cache with no known commit, or
      * one outside the history, is deleted and the run records coverage afresh, and so
-     * is one that counted Browser specs differently from the coming run ($withBrowser).
+     * is one that counted Browser specs differently from the coming run ($withBrowser),
+     * and one stamped by an older toolkit.
      *
      * It also says when the run can't replay and will cover every test: Pest's graph is
      * missing or out of date, or there is no coverage cache yet. On an out-of-date graph
@@ -131,6 +132,13 @@ final readonly class TiaBaselines
             return $stamp->withBrowser
                 ? 'TIA: the coverage cache counts Browser specs, and this gate leaves them out. Recording coverage afresh.'
                 : 'TIA: the coverage cache leaves Browser specs out, and this gate runs them. Recording coverage afresh.';
+        }
+
+        if ($stamp->format !== CoverageStamp::FORMAT) {
+            $this->files->delete($directory.DIRECTORY_SEPARATOR.CoverageCache::FILE);
+            $this->files->delete($directory.DIRECTORY_SEPARATOR.CoverageStamp::FILE);
+
+            return 'TIA: the coverage cache was kept by an older toolkit, which could leave files out of it. Recording coverage afresh.';
         }
 
         $done = [];
