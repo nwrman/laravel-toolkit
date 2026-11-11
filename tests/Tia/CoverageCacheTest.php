@@ -59,7 +59,7 @@ it('forgets changed files and keeps the rest', function (): void {
         '/repo/app/Kept.php' => [8 => ['t2']],
     ]);
 
-    expect(CoverageCache::forget(new Filesystem, $path, ['/repo/app/Changed.php', '/repo/app/New.php']))->toBe(1)
+    expect(CoverageCache::forget(new Filesystem, $path, ['/repo/app/Changed.php', '/repo/app/New.php']))->toBe(['/repo/app/Changed.php'])
         ->and(cachedLines($path))->toBe(['/repo/app/Kept.php' => [8 => ['t2']]]);
 
     File::delete($path);

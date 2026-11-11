@@ -68,7 +68,9 @@ browser visit.
 
 When the project enables it (`pest()->tia()` in `tests/Pest.php`, `toolkit.tia.enabled`), Pest records which test
 touches which file and replays only the tests a change can reach. One edited file typically runs a fraction of the
-suite; an unchanged tree runs nothing; a comment-only edit or a formatter pass runs zero tests.
+suite; an unchanged tree runs nothing; a comment-only edit or a formatter pass runs zero tests in `composer test`.
+The coverage gate re-runs a covered PHP file's tests once after such an edit, because comments move the line numbers
+its coverage is kept by; a file still uncommitted from one preflight to the next costs nothing the second time.
 
 - **Prefer a full run over guessing a suite.** TIA selects by real dependency, so it catches the feature tests a
   "this is just a unit change" guess would miss. Selecting a suite or a filter switches TIA off.

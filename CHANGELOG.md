@@ -2,6 +2,26 @@
 
 All notable changes to `laravel-toolkit` will be documented in this file.
 
+## v1.1.0 — unreleased
+
+### Fixes found benchmarking Minuta's preflight
+
+- **An uncommitted file no longer re-runs its tests on every preflight.** Preflight stamped each uncommitted file with
+  an empty hash and handed that to Pest, which matches no file, so every coverage gate re-ran every test an uncommitted
+  file reaches until it was committed. On Minuta a comment-only edit to `resources/js/app.tsx`, which Pest maps to all
+  284 test files, made each following coverage gate take 190–670 s instead of about 20 s. The stamp now holds a hash of
+  each file, and Pest replays a file only when it changed since the last coverage run.
+- **A file whose coverage preflight forgets has its tests replayed.** Preflight forgets a changed file's coverage so its
+  old line numbers cannot linger, but Pest ignores comment-only edits, so after one no test re-ran and the file dropped
+  out of the coverage cache, committed or not. Preflight now makes Pest replay every file it forgets.
+- **A coverage cache kept by an older toolkit is recorded afresh, once.** It can already lack files for the reason
+  above. The first coverage gate after the upgrade runs every test and prints a `TIA:` line saying why.
+
+### Breaking
+
+- **Pest 5 only.** The constraints were `^4.0||^5.0`, left over from the first release; every app on the toolkit runs
+  Pest 5. The coverage gate's full-run note loses its Pest 4 wording.
+
 ## v1.0.5 — 2026-11-04
 
 ### Fixes found checking v1.0.4 on Minuta
