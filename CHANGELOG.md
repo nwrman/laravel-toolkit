@@ -2,6 +2,18 @@
 
 All notable changes to `laravel-toolkit` will be documented in this file.
 
+## v1.1.0 — unreleased
+
+### Fixes
+
+- **A renamed or deleted Vitest test leaves the failure report.** The reporter kept an earlier failure whenever its file
+  existed and that exact name had not run, so a renamed test's failure stayed forever: `Failed: 1` beside a Vitest run
+  with every test passing. A run of whole files now drops an earlier failure from a file it ran, as the backend
+  section does.
+- **A filtered Vitest re-run keeps the other failures.** Vitest reports the tests a `-t` filter leaves out as skipped,
+  and the reporter counted them as run, so re-running one test erased the others' failures while they still failed.
+  `composer test:retry`'s frontend half marks its run as a retry, which drops only the earlier failures it did not run.
+
 ## v1.0.5 — 2026-11-04
 
 ### Fixes found checking v1.0.4 on Minuta
