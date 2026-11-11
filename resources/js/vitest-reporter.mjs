@@ -15,16 +15,23 @@ export default class ToolkitFailureReporter {
       jsonFile: resolve(options.jsonFile ?? defaultPaths.jsonFile),
       reportFile: resolve(options.reportFile ?? defaultPaths.reportFile),
     };
+    this.namePattern = undefined;
+  }
+
+  onInit(vitest) {
+    this.namePattern = vitest?.config?.testNamePattern;
   }
 
   onTestRunEnd(testModules, unhandledErrors = [], reason = 'passed') {
     const root = process.cwd();
     const failures = [];
     const ran = new Set();
+    const filesRan = new Set();
     let total = 0;
 
     for (const module of testModules) {
       const file = relative(root, module.moduleId);
+      filesRan.add(file);
       ran.add(`${file}\0(the file itself)`);
 
       for (const error of module.errors()) {
@@ -33,16 +40,20 @@ export default class ToolkitFailureReporter {
 
       for (const test of module.children.allTests()) {
         total++;
-        ran.add(`${file}\0${test.fullName}`);
         const result = test.result();
+        // A name filter reports the tests it left out as skipped: they did not run.
+        if (result.state !== 'skipped') ran.add(`${file}\0${test.fullName}`);
         if (result.state !== 'failed') continue;
         failures.push({ file, name: test.fullName, message: (result.errors ?? []).map(describe).join('\n\n') });
       }
     }
 
-    // A narrow re-run keeps the earlier failures of tests it did not run.
+    // An earlier failure this run did not run is kept only while its test may still exist.
+    const selection = this.selection();
     const earlier = readSections(this.paths.jsonFile).frontend?.failures ?? [];
-    const kept = earlier.filter((failure) => !ran.has(`${failure.file}\0${failure.name}`) && existsSync(resolve(root, failure.file)));
+    const kept = earlier.filter((failure) => !ran.has(`${failure.file}\0${failure.name}`)
+      && existsSync(resolve(root, failure.file))
+      && (selection === 'narrowed' || (selection === 'whole_files' && !filesRan.has(failure.file))));
     failures.push(...kept);
 
     const notes = unhandledErrors.map((error) => `Unhandled error outside any test: ${describe(error)}`);
@@ -55,6 +66,15 @@ export default class ToolkitFailureReporter {
     }
 
     putSection(this.paths, 'frontend', section(failures, notes, total));
+  }
+
+  selection() {
+    // A retry's filter named every earlier failure: one it did not run is gone.
+    if (process.env.TOOLKIT_VITEST_RETRY === '1') return 'retry';
+    // A name filter: a test it did not run may still exist.
+    if (this.namePattern) return 'narrowed';
+    // Every test of each file it ran: a test missing from them is gone.
+    return 'whole_files';
   }
 }
 

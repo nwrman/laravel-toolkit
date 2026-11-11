@@ -68,7 +68,7 @@ test('prints a re-run command whose pattern matches only that test', () => {
   assert.equal(new RegExp(pattern).test('A > counts 1'), false);
 });
 
-test('keeps the earlier failures of tests a narrow re-run did not run', () => {
+test('keeps the earlier failures of a file the run did not run', () => {
   const root = project();
   mkdirSync(join(root, 'resources/js'), { recursive: true });
   writeFileSync(join(root, 'resources/js/a.test.ts'), '');
@@ -83,4 +83,51 @@ test('keeps the earlier failures of tests a narrow re-run did not run', () => {
   const section = JSON.parse(readFileSync(join(root, 'storage/logs/test-failures.json'), 'utf8')).sections.frontend;
   assert.deepEqual(section.failures, [{ file: 'resources/js/b.test.ts', name: 'B > y', message: 'b red' }]);
   assert.deepEqual(section.notes, ['1 failure(s) below are from an earlier run: this run did not run those tests.']);
+});
+
+function earlierFailure(root, file, name) {
+  mkdirSync(join(root, 'resources/js'), { recursive: true });
+  writeFileSync(join(root, file), '');
+  new ToolkitFailureReporter().onTestRunEnd([moduleWith(root, file, [[name, 'failed', 'red']])]);
+}
+
+function frontendSection(root) {
+  if (!existsSync(join(root, 'storage/logs/test-failures.json'))) return undefined;
+  return JSON.parse(readFileSync(join(root, 'storage/logs/test-failures.json'), 'utf8')).sections.frontend;
+}
+
+test('drops the earlier failure of a test renamed in a file the run ran in full', () => {
+  const root = project();
+  earlierFailure(root, 'resources/js/a.test.ts', 'A > old name');
+
+  new ToolkitFailureReporter().onTestRunEnd([moduleWith(root, 'resources/js/a.test.ts', [['A > new name', 'passed']])]);
+
+  assert.equal(frontendSection(root), undefined);
+});
+
+test('keeps the earlier failure of a test a name filter skipped in the same file', () => {
+  const root = project();
+  earlierFailure(root, 'resources/js/a.test.ts', 'A > x');
+  const reporter = new ToolkitFailureReporter();
+  reporter.onInit({ config: { testNamePattern: /^A > y$/ } });
+
+  reporter.onTestRunEnd([moduleWith(root, 'resources/js/a.test.ts', [['A > x', 'skipped'], ['A > y', 'passed']])]);
+
+  assert.deepEqual(frontendSection(root).failures, [{ file: 'resources/js/a.test.ts', name: 'A > x', message: 'red' }]);
+});
+
+test('drops an earlier failure the retry did not run: its test is gone', () => {
+  const root = project();
+  earlierFailure(root, 'resources/js/a.test.ts', 'A > deleted');
+  const reporter = new ToolkitFailureReporter();
+  reporter.onInit({ config: { testNamePattern: /^(?:A > deleted)$/ } });
+  process.env.TOOLKIT_VITEST_RETRY = '1';
+
+  try {
+    reporter.onTestRunEnd([moduleWith(root, 'resources/js/a.test.ts', [['A > other', 'skipped']])]);
+  } finally {
+    delete process.env.TOOLKIT_VITEST_RETRY;
+  }
+
+  assert.equal(frontendSection(root), undefined);
 });
