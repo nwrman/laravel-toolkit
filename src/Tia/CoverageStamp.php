@@ -21,10 +21,16 @@ use Illuminate\Filesystem\Filesystem;
  * did, read by a gate that leaves them out, reports lines only a Browser spec covers
  * as covered. A stamp from before v1 has no such field: v0's coverage gate ran every
  * suite, so it counted them.
+ *
+ * Its format says how it hashes uncommitted files. Before format 2 they were stamped
+ * with an empty hash, and a coverage cache kept under those stamps can lack files
+ * whose tests TIA never replayed, so a stamp in an older format is not trusted.
  */
 final readonly class CoverageStamp
 {
     public const string FILE = 'toolkit-coverage.json';
+
+    public const int FORMAT = 2;
 
     /**
      * @param  array<string, string>  $tree
@@ -34,6 +40,7 @@ final readonly class CoverageStamp
         public string $sha,
         public array $tree,
         public bool $withBrowser = false,
+        public int $format = self::FORMAT,
     ) {}
 
     public static function read(Filesystem $files, string $directory): ?self
@@ -53,12 +60,12 @@ final readonly class CoverageStamp
         /** @var array<string, string> $tree */
         $tree = is_array($stamp['tree'] ?? null) ? $stamp['tree'] : [];
 
-        return new self($stamp['root'], $stamp['sha'], $tree, (bool) ($stamp['browser'] ?? true));
+        return new self($stamp['root'], $stamp['sha'], $tree, (bool) ($stamp['browser'] ?? true), is_int($stamp['format'] ?? null) ? $stamp['format'] : 1);
     }
 
     public function withRoot(string $root): self
     {
-        return new self($root, $this->sha, $this->tree, $this->withBrowser);
+        return new self($root, $this->sha, $this->tree, $this->withBrowser, $this->format);
     }
 
     public function writeTo(Filesystem $files, string $directory): void
@@ -69,6 +76,7 @@ final readonly class CoverageStamp
             'sha' => $this->sha,
             'tree' => (object) $this->tree,
             'browser' => $this->withBrowser,
+            'format' => $this->format,
         ], JSON_UNESCAPED_SLASHES));
     }
 }
