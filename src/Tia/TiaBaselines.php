@@ -7,6 +7,7 @@ namespace Nwrman\LaravelToolkit\Tia;
 use Composer\InstalledVersions;
 use Illuminate\Filesystem\Filesystem;
 use Illuminate\Process\Factory;
+use Pest\Plugins\Tia\ChangedFiles;
 use Pest\Plugins\Tia\Fingerprint;
 
 /**
@@ -225,8 +226,9 @@ final readonly class TiaBaselines
 
     /**
      * Notes what a coverage gate covers before it runs: the checked-out commit, plus
-     * every file that differs from it. Uncommitted files go in with an empty hash, which
-     * matches no file, so the run after this one replays them whatever they hold by then.
+     * every file that differs from it, with what it holds as Pest hashes it. The next
+     * run replays and re-covers such a file only if it changed after this one started;
+     * a deleted file has an empty hash, which matches no file, so it is always replayed.
      *
      * The cache's current stamp stays where it is. Pest writes the coverage cache only
      * when the tests passed (its coverage report runs on exit 0 only), so a run that is
@@ -246,7 +248,7 @@ final readonly class TiaBaselines
         $untracked = (string) $this->git($root, ['ls-files', '--others', '--exclude-standard']);
         $dirty = preg_split('/\R/', mb_trim($changed."\n".$untracked), -1, PREG_SPLIT_NO_EMPTY) ?: [];
 
-        return new CoverageRun($directory, new CoverageStamp($this->realRoot($root), $sha, array_fill_keys($dirty, ''), $withBrowser), time());
+        return new CoverageRun($directory, new CoverageStamp($this->realRoot($root), $sha, $this->contentHashes($root, $dirty), $withBrowser), time());
     }
 
     /**
@@ -269,7 +271,9 @@ final readonly class TiaBaselines
 
     /**
      * Files that differ from what the stamp covered: committed since its commit, uncommitted
-     * now, or uncommitted when it was taken. Paths relative to the checkout.
+     * now, or uncommitted when it was taken. A file uncommitted when it was taken and
+     * holding the same content now is left out: the cache already covers it. Paths
+     * relative to the checkout.
      *
      * @return array<int, string>
      */
@@ -280,8 +284,26 @@ final readonly class TiaBaselines
             (string) $this->git($root, ['ls-files', '--others', '--exclude-standard']),
         ]);
         $files = preg_split('/\R/', $output, -1, PREG_SPLIT_NO_EMPTY) ?: [];
+        $candidates = array_values(array_unique([...$files, ...array_keys($stamp->tree)]));
+        $now = $this->contentHashes($root, array_keys($stamp->tree));
 
-        return array_values(array_unique([...$files, ...array_keys($stamp->tree)]));
+        return array_values(array_filter(
+            $candidates,
+            fn (string $file): bool => ($stamp->tree[$file] ?? '') === '' || $stamp->tree[$file] !== $now[$file],
+        ));
+    }
+
+    /**
+     * What each file holds, hashed as Pest's TIA hashes it, so a stamp Pest is handed
+     * compares equal to the tree Pest records itself. Pest's hash ignores what can't
+     * change behaviour, such as comments. A deleted or unreadable file hashes to ''.
+     *
+     * @param  array<int, string>  $files
+     * @return array<string, string>
+     */
+    private function contentHashes(string $root, array $files): array
+    {
+        return [...array_fill_keys($files, ''), ...new ChangedFiles($root)->snapshotTree($files)];
     }
 
     /**

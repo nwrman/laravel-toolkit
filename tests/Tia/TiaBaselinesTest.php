@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\Process;
 use Nwrman\LaravelToolkit\Tia\CoverageStamp;
 use Nwrman\LaravelToolkit\Tia\PestCache;
 use Nwrman\LaravelToolkit\Tia\TiaBaselines;
+use Pest\Plugins\Tia\ChangedFiles;
 use Pest\Plugins\Tia\Fingerprint;
 
 /**
@@ -369,7 +370,7 @@ function rewriteCoverage(string $cacheDir): void
     File::put($cacheDir.'/coverage.bin.gz', (string) gzencode(serialize(['rewritten' => true])));
 }
 
-it('stamps a cache the gate rewrote with the commit it covered, uncommitted files marked to replay', function (): void {
+it('stamps a cache the gate rewrote with the commit it covered and what each uncommitted file held', function (): void {
     $t1 = ticket($this->repo, 'feature/t1-one');
     $sha = git($t1, 'rev-parse', 'HEAD');
     File::put($t1.'/Dirty.php', '<?php');
@@ -378,7 +379,54 @@ it('stamps a cache the gate rewrote with the commit it covered, uncommitted file
     rewriteCoverage(cacheOf($this->caches, $t1));
     $this->baselines->finishCoverageRun($run);
 
-    expect(CoverageStamp::read(new Filesystem, cacheOf($this->caches, $t1)))->toEqual(new CoverageStamp($t1, $sha, ['Dirty.php' => '']));
+    expect(CoverageStamp::read(new Filesystem, cacheOf($this->caches, $t1)))
+        ->toEqual(new CoverageStamp($t1, $sha, new ChangedFiles($t1)->snapshotTree(['Dirty.php'])));
+});
+
+/**
+ * A coverage gate run with app/Uncommitted.php uncommitted, holding $content: the stamp
+ * preflight writes, the coverage the run leaves, and the tree Pest records as it exits.
+ */
+function coverUncommitted(TiaBaselines $baselines, string $caches, string $checkout, string $branch, string $content): void
+{
+    recordRun($caches, $checkout, $branch, $sha = git($checkout, 'rev-parse', 'HEAD'));
+    File::ensureDirectoryExists($checkout.'/app');
+    File::put($checkout.'/app/Uncommitted.php', $content);
+
+    $run = $baselines->startCoverageRun($checkout);
+    coverageCacheFile(cacheOf($caches, $checkout).'/coverage.bin.gz', [$checkout.'/app/Uncommitted.php' => [3 => ['t1']]]);
+    $baselines->finishCoverageRun($run);
+    movePestCommit(cacheOf($caches, $checkout), $branch, $sha, new ChangedFiles($checkout)->snapshotTree(['app/Uncommitted.php']));
+}
+
+/**
+ * The files Pest's next replay counts as changed since its last run, out of $files.
+ *
+ * @param  array<int, string>  $files
+ * @return array<int, string>
+ */
+function replayedByPest(string $caches, string $checkout, string $branch, array $files): array
+{
+    return new ChangedFiles($checkout)->filterUnchangedSinceLastRun($files, baselinesIn(cacheOf($caches, $checkout))[$branch]['tree']);
+}
+
+it('does not replay or re-cover an uncommitted file the last coverage run already covered', function (): void {
+    $t1 = ticket($this->repo, 'feature/t1-one');
+    coverUncommitted($this->baselines, $this->caches, $t1, 'feature/t1-one', "<?php\n\nreturn 1;\n");
+
+    expect($this->baselines->alignCoverage($t1))->toBeNull()
+        ->and(replayedByPest($this->caches, $t1, 'feature/t1-one', ['app/Uncommitted.php']))->toBe([])
+        ->and(cachedLines(cacheOf($this->caches, $t1).'/coverage.bin.gz'))->toBe([$t1.'/app/Uncommitted.php' => [3 => ['t1']]]);
+});
+
+it('replays and re-covers an uncommitted file edited since the last coverage run', function (): void {
+    $t1 = ticket($this->repo, 'feature/t1-one');
+    coverUncommitted($this->baselines, $this->caches, $t1, 'feature/t1-one', "<?php\n\nreturn 1;\n");
+    File::put($t1.'/app/Uncommitted.php', "<?php\n\nreturn 2;\n");
+
+    expect($this->baselines->alignCoverage($t1))->toBe('TIA: re-covering 1 changed file.')
+        ->and(replayedByPest($this->caches, $t1, 'feature/t1-one', ['app/Uncommitted.php']))->toBe(['app/Uncommitted.php'])
+        ->and(cachedLines(cacheOf($this->caches, $t1).'/coverage.bin.gz'))->toBe([]);
 });
 
 it('keeps the stamp in place while a coverage gate runs, so an interrupted run leaves the cache trusted', function (): void {
