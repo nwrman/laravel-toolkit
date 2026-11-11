@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Nwrman\LaravelToolkit\Tia;
 
-use Composer\InstalledVersions;
 use Illuminate\Filesystem\Filesystem;
 use Illuminate\Process\Factory;
 use Pest\Plugins\Tia\ChangedFiles;
@@ -178,15 +177,11 @@ final readonly class TiaBaselines
 
     /**
      * Why Pest will run the next coverage gate without its graph, or null when the graph
-     * is usable (or this Pest can't say). Pest sets a graph aside when a fingerprinted
-     * file such as `composer.lock` changed since it was recorded.
+     * is usable. Pest sets a graph aside when a fingerprinted file such as
+     * `composer.lock` changed since it was recorded.
      */
     private function graphProblem(string $root, string $directory): ?string
     {
-        if (! class_exists(Fingerprint::class)) {
-            return null;
-        }
-
         $path = $directory.DIRECTORY_SEPARATOR.BaselineSnapshot::GRAPH;
         $graph = $this->files->isFile($path) ? json_decode($this->files->get($path), true) : null;
 
@@ -210,18 +205,13 @@ final readonly class TiaBaselines
     }
 
     /**
-     * What a coverage gate does without a usable graph. Pest 5's coverage runs can't
-     * record a graph, and the plain run that does drops the coverage cache along with
-     * the old graph, so coverage replays only after a plain run and one full coverage
-     * run. Pest 4's coverage run records both at once.
+     * What a coverage gate does without a usable graph. A coverage run can't record a
+     * graph, and the plain run that does drops the coverage cache along with the old
+     * graph, so coverage replays only after a plain run and one full coverage run.
      */
     private function fullRunNote(string $problem): string
     {
-        $pest = InstalledVersions::isInstalled('pestphp/pest') ? InstalledVersions::getVersion('pestphp/pest') : null;
-
-        return $pest !== null && version_compare($pest, '5.0.0.0', '>=')
-            ? sprintf('TIA: %s, and a coverage run can\'t record a new one: the coverage gate runs every test. The next `composer test` records the graph, and the preflight after it records coverage once.', $problem)
-            : sprintf('TIA: %s: the coverage gate runs every test and records a new graph.', $problem);
+        return sprintf('TIA: %s, and a coverage run can\'t record a new one: the coverage gate runs every test. The next `composer test` records the graph, and the preflight after it records coverage once.', $problem);
     }
 
     /**
